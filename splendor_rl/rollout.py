@@ -24,6 +24,7 @@ class PlayerTransition:
     reward: float
     discount: float
     done: bool
+    truncated: bool
     env_id: int
     player_id: int
     decision_id: int
@@ -107,6 +108,16 @@ class RolloutCollector:
             float(value.item()),
         )
 
+    def _critic_value(self, env: SelfPlayWrapper, player: int) -> float:
+        state = env.critic_state(player)
+        with torch.no_grad():
+            value = self.critic(
+                torch.as_tensor(
+                    state, dtype=torch.float32, device=self.device
+                ).unsqueeze(0)
+            )
+        return float(value.item())
+
     def collect(self, target: int, gae_lambda=0.95):
         completed = list(self.ready)
         self.ready.clear()
@@ -144,6 +155,7 @@ class RolloutCollector:
                     0.0,
                     0.0,
                     False,
+                    False,
                     env_id,
                     player,
                     env.game.decision_id,
@@ -166,8 +178,13 @@ class RolloutCollector:
                         item = self.pending.pop(pending_key)
                         item.reward = rewards[item.player_id]
                         item.done = env.game.terminated
+                        item.truncated = env.game.truncated
                         item.discount = 0.0 if env.game.terminated else self.gamma
-                        item.next_value = 0.0 if env.game.terminated else item.value
+                        item.next_value = (
+                            0.0
+                            if env.game.terminated
+                            else self._critic_value(env, item.player_id)
+                        )
                         completed.append(item)
                         self.trajectories.setdefault(pending_key, []).append(item)
                     self.episodes.append(

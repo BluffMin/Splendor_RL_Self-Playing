@@ -24,8 +24,11 @@ def ppo_update(actor, critic, optimizer, transitions, advantages, returns, confi
     if config.normalize_advantages:
         adv = (adv - adv.mean()) / (adv.std(unbiased=False) + 1e-8)
     stats = []
+    epoch_summaries = []
+    early_stopped = False
     indices = np.arange(n)
-    for _ in range(config.update_epochs):
+    for epoch in range(config.update_epochs):
+        epoch_kls = []
         np.random.shuffle(indices)
         for start in range(0, n, config.minibatch_size):
             ix = torch.as_tensor(
@@ -56,6 +59,8 @@ def ppo_update(actor, critic, optimizer, transitions, advantages, returns, confi
             entropy_coef = getattr(
                 config, "current_entropy_coef", config.entropy_coef_start
             )
+            if entropy_coef is None:
+                entropy_coef = config.entropy_coef_start
             loss = policy_loss + config.value_coef * value_loss - entropy_coef * entropy
             optimizer.zero_grad()
             loss.backward()
@@ -65,6 +70,7 @@ def ppo_update(actor, critic, optimizer, transitions, advantages, returns, confi
             )
             optimizer.step()
             kl = ((ratio - 1) - (new_log - old_log[ix])).mean()
+            epoch_kls.append(float(kl.item()))
             clip = ((ratio - 1).abs() > config.clip_coef).float().mean()
             stats.append(
                 [
@@ -76,7 +82,12 @@ def ppo_update(actor, critic, optimizer, transitions, advantages, returns, confi
                     float(grad),
                 ]
             )
-        if stats[-1][3] > config.target_kl:
+        epoch_mean = float(np.mean(epoch_kls))
+        epoch_max = float(np.max(epoch_kls))
+        epoch_summaries.append((epoch_mean, epoch_max))
+        criterion = epoch_mean if config.target_kl_mode == "mean_epoch" else epoch_max
+        if config.target_kl is not None and criterion > config.target_kl:
+            early_stopped = True
             break
     mean = np.asarray(stats).mean(0)
     variance = np.var(returns)
@@ -91,11 +102,20 @@ def ppo_update(actor, critic, optimizer, transitions, advantages, returns, confi
                 "policy_loss",
                 "value_loss",
                 "entropy",
-                "approx_kl",
+                "approx_kl_mean",
                 "clip_fraction",
                 "gradient_norm",
             ),
             mean,
             strict=True,
         )
-    ) | {"explained_variance": float(explained)}
+    ) | {
+        "approx_kl_max": float(np.asarray(stats)[:, 3].max()),
+        "explained_variance": float(explained),
+        "ppo_requested_epochs": config.update_epochs,
+        "ppo_completed_epochs": len(epoch_summaries),
+        "ppo_early_stopped": early_stopped,
+        "early_stop_epoch": len(epoch_summaries) if early_stopped else None,
+        "mean_epoch_kl": epoch_summaries[-1][0],
+        "max_minibatch_kl": epoch_summaries[-1][1],
+    }

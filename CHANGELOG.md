@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1 - PPO training stabilization
+
+- Corrected truncation-state critic bootstrapping.
+- Added initial and periodic fixed-bot evaluations and numbered checkpoints.
+- Added automatic best-checkpoint selection.
+- Implemented resume-safe transition-based LR and entropy schedules.
+- Changed target-KL stopping to epoch-level statistics.
+- Clarified privileged critic information scope and v0.4.0 compatibility.
+- Added a one-million-transition experiment configuration.
+
 ## v0.4.0 - Shared-parameter PPO self-play baseline
 
 - Shared actor across all players and seats with a separate CTDE critic.

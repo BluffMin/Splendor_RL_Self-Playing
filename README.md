@@ -1,5 +1,15 @@
 # Splendor Self-Play Environment
 
+## v0.4.1 PPO stabilization
+
+This patch adds correct post-truncation bootstrap values, periodic evaluation, numbered and best checkpoints, linear LR decay, epoch-mean target-KL stopping, and v0.4.0 checkpoint compatibility. The critic sees private reservation payloads but not full hidden deck order.
+
+```powershell
+python experiments/train_shared_ppo.py --config configs/shared_ppo_4p_1m.yaml --run-dir runs/shared_ppo_4p_1m_seed42
+python experiments/train_shared_ppo.py --config configs/shared_ppo_4p_1m.yaml --run-dir runs/shared_ppo_4p_1m_seed42 --resume runs/shared_ppo_4p_1m_seed42/checkpoints/latest.pt
+python experiments/evaluate_shared_ppo.py --checkpoint runs/shared_ppo_4p_1m_seed42/checkpoints/best_average_rank.pt --games-per-matchup 500 --output-dir runs/shared_ppo_4p_1m_seed42/final_evaluation
+```
+
 ## Shared PPO v0.4.0
 
 Install the optional learner and run the pipeline smoke test:

@@ -20,6 +20,7 @@ def main():
     p.add_argument("--total-transitions", type=int)
     p.add_argument("--payment-mode", choices=("canonical", "exact"))
     p.add_argument("--device")
+    p.add_argument("--allow-schedule-override", action="store_true")
     a = p.parse_args()
     config = PPOConfig.load(a.config)
     config.update(
@@ -32,7 +33,9 @@ def main():
             "device": a.device,
         }
     )
-    train(config, a.run_dir, a.resume)
+    train(
+        config, a.run_dir, a.resume, allow_schedule_override=a.allow_schedule_override
+    )
 
 
 if __name__ == "__main__":

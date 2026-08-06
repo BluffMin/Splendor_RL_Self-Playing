@@ -52,6 +52,11 @@ class SelfPlayWrapper:
         return self.game.observation(player_id, omniscient=False)
 
     def critic_state(self, player_id: int) -> np.ndarray:
+        """Return a privileged egocentric observation.
+
+        Private reserved-card payloads are visible, but the complete hidden
+        deck order is not encoded.
+        """
         return self.game.observation(player_id, omniscient=True)
 
     def action_mask(self) -> np.ndarray:

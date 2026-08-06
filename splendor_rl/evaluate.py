@@ -32,7 +32,14 @@ def main(argv=None):
     )
     print(
         json.dumps(
-            evaluate_ladder(actor, a.output_dir, a.games_per_matchup, device=a.device),
+            evaluate_ladder(
+                actor,
+                a.output_dir,
+                a.games_per_matchup,
+                device=a.device,
+                checkpoint_path=a.checkpoint,
+                transition_count=data.get("global_transition_count", 0),
+            ),
             indent=2,
         )
     )

@@ -33,6 +33,7 @@ def test_synthetic_update_changes_parameters():
                 0,
                 0.9,
                 False,
+                False,
                 0,
                 0,
                 i,
@@ -51,6 +52,7 @@ def test_synthetic_update_changes_parameters():
         np.ones(8, dtype="float32"),
         config,
     )
+    numeric = [v for v in stats.values() if isinstance(v, (int, float))]
     assert not torch.equal(before, next(actor.parameters())) and all(
-        np.isfinite(v) for v in stats.values()
+        np.isfinite(v) for v in numeric
     )
