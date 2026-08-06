@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.3 - Progress monitoring and staged training runs
+
+- Added tqdm-based training and fixed-bot evaluation progress.
+- Added PowerShell-friendly `auto`, `always`, and `never` progress modes.
+- Added transition ETA and compact PPO status metrics.
+- Added absolute `--stop-at-transitions` staged runs without shortening schedules.
+- Added resume-aware progress and progress-safe checkpoint/evaluation messages.
+- Converted no-official-action collector deadlocks into recorded safety truncations.
+
 ## v0.4.2 - First-class two-player self-play support
 
 - Removed four-player assumptions from fixed-bot evaluation.

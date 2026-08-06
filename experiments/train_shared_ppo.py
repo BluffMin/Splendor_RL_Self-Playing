@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from splendor_rl.config import PPOConfig
+from splendor_rl.progress import ProgressConfig, ProgressMode
 from splendor_rl.train import train
 
 
@@ -21,6 +22,11 @@ def main():
     p.add_argument("--payment-mode", choices=("canonical", "exact"))
     p.add_argument("--device")
     p.add_argument("--allow-schedule-override", action="store_true")
+    p.add_argument(
+        "--progress", choices=[mode.value for mode in ProgressMode], default="auto"
+    )
+    p.add_argument("--progress-refresh-seconds", type=float, default=1.0)
+    p.add_argument("--stop-at-transitions", type=int)
     a = p.parse_args()
     config = PPOConfig.load(a.config)
     config.update(
@@ -33,8 +39,14 @@ def main():
             "device": a.device,
         }
     )
+    progress = ProgressConfig(ProgressMode(a.progress), a.progress_refresh_seconds)
     train(
-        config, a.run_dir, a.resume, allow_schedule_override=a.allow_schedule_override
+        config,
+        a.run_dir,
+        a.resume,
+        allow_schedule_override=a.allow_schedule_override,
+        progress_config=progress,
+        stop_at_transitions=a.stop_at_transitions,
     )
 
 

@@ -21,6 +21,7 @@ from .player_count import (
     build_fixed_bot_matchups,
     validate_num_players,
 )
+from .progress import ProgressConfig, make_evaluation_progress
 
 
 class NobleAgent(GreedyAgent):
@@ -112,6 +113,7 @@ def evaluate_ladder(
     checkpoint_path="",
     transition_count=0,
     save_replays=True,
+    progress_config: ProgressConfig | None = None,
 ):
     num_players = validate_num_players(num_players)
     was_training = actor.training
@@ -122,6 +124,11 @@ def evaluate_ladder(
     matchups = build_fixed_bot_matchups(num_players)
     actual_games = max(1, games_per_matchup)
     seats = balanced_policy_seats(num_players, actual_games)
+    progress = make_evaluation_progress(
+        len(matchups) * actual_games,
+        transition_count,
+        progress_config or ProgressConfig(),
+    )
     try:
         with torch.no_grad():
             for matchup_index, (matchup, opponents) in enumerate(matchups.items()):
@@ -187,6 +194,15 @@ def evaluate_ladder(
                             "seed": game_seed,
                         }
                     )
+                    matchup_rows = [r for r in rows if r["matchup"] == matchup]
+                    running = _stats(matchup_rows, num_players)
+                    progress.update(
+                        1,
+                        matchup=matchup.removeprefix("policy_vs_"),
+                        seat=f"P{seat}",
+                        rank=f"{running['average_rank']:.2f}",
+                        first=f"{running['fractional_first_place_rate']:.1%}",
+                    )
                     if recorder:
                         doc = recorder.finalize()
                         if game.truncated and doc["events"]:
@@ -222,6 +238,7 @@ def evaluate_ladder(
                         )
     finally:
         actor.train(was_training)
+        progress.close()
     with (output / "results.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
@@ -232,7 +249,7 @@ def evaluate_ladder(
     }
     aggregate = _stats(rows, num_players)
     summary = {
-        "rl_version": "0.4.2",
+        "rl_version": "0.4.3",
         "engine_version": "0.3.2",
         "num_players": num_players,
         "training_mode": "shared_parameter_self_play",

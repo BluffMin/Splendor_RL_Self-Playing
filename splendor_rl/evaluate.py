@@ -8,6 +8,7 @@ import torch
 from .checkpoint import load_checkpoint
 from .evaluation import evaluate_ladder
 from .models import SharedActor
+from .progress import ProgressConfig, ProgressMode
 
 
 def resolve_checkpoint_num_players(data, requested=None):
@@ -31,7 +32,14 @@ def main(argv=None):
     p.add_argument("--device", default="cpu")
     p.add_argument("--actor-only", action="store_true")
     p.add_argument("--num-players", type=int)
+    p.add_argument(
+        "--progress", choices=[mode.value for mode in ProgressMode], default="auto"
+    )
+    p.add_argument("--progress-refresh-seconds", type=float, default=1.0)
     a = p.parse_args(argv)
+    progress_config = ProgressConfig(
+        ProgressMode(a.progress), a.progress_refresh_seconds
+    )
     data = torch.load(a.checkpoint, map_location=a.device, weights_only=False)
     checkpoint_players = resolve_checkpoint_num_players(data, a.num_players)
     sizes = data["observation_sizes"]
@@ -56,6 +64,7 @@ def main(argv=None):
                 num_players=checkpoint_players,
                 checkpoint_path=a.checkpoint,
                 transition_count=data.get("global_transition_count", 0),
+                progress_config=progress_config,
             ),
             indent=2,
         )

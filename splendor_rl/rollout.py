@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from splendor_env.actions import ACTIONS
+from splendor_env.core import NoLegalActionError
 from splendor_env.wrappers import SelfPlayWrapper
 
 from .distributions import MaskedCategorical
@@ -74,6 +75,38 @@ class RolloutCollector:
         self.action_counts = {}
         self.ready: list[PlayerTransition] = []
 
+    def _finish_env(self, env_id, env, completed):
+        rewards = env.rewards()
+        for pending_key in [k for k in self.pending if k[0] == env_id]:
+            item = self.pending.pop(pending_key)
+            item.reward = rewards[item.player_id]
+            item.done = env.game.terminated
+            item.truncated = env.game.truncated
+            item.discount = 0.0 if env.game.terminated else self.gamma
+            item.next_value = (
+                0.0 if env.game.terminated else self._critic_value(env, item.player_id)
+            )
+            completed.append(item)
+            self.trajectories.setdefault(pending_key, []).append(item)
+        self.episodes.append(
+            {
+                "turns": env.game.turns_completed,
+                "decisions": env.game.decision_id,
+                "rounds": env.game.round_id,
+                "scores": [p.score for p in env.game.players],
+                "winners": env.game.winner_ids(),
+                "truncated": env.game.truncated,
+                "truncation_reason": env.game.end_reason,
+            }
+        )
+        self.episode_indices[env_id] += 1
+        self.envs[env_id] = SelfPlayWrapper(
+            self.num_players,
+            seed=self.seed + env_id * 100003 + self.episode_indices[env_id],
+            payment_mode=env.payment_mode,
+            max_turns=self.max_turns,
+        )
+
     def _policy(self, env: SelfPlayWrapper, player: int):
         obs = env.actor_observation(player)
         state = env.critic_state(player)
@@ -128,7 +161,16 @@ class RolloutCollector:
                 if len(completed) >= target:
                     break
                 player = env.game.current_player
-                obs, state, mask, action, log_prob, value = self._policy(env, player)
+                try:
+                    obs, state, mask, action, log_prob, value = self._policy(
+                        env, player
+                    )
+                except NoLegalActionError:
+                    # An official-action deadlock is evaluator-owned truncation, not
+                    # an engine action or invariant failure.
+                    env.game.truncate("training_no_legal_action")
+                    self._finish_env(env_id, env, completed)
+                    continue
                 if not mask[action]:
                     self.illegal_actions += 1
                     raise AssertionError("policy selected illegal action")
@@ -173,37 +215,7 @@ class RolloutCollector:
                     raise
                 completed_turns += env.game.turns_completed - turn_before
                 if env.game.done:
-                    rewards = env.rewards()
-                    for pending_key in [k for k in self.pending if k[0] == env_id]:
-                        item = self.pending.pop(pending_key)
-                        item.reward = rewards[item.player_id]
-                        item.done = env.game.terminated
-                        item.truncated = env.game.truncated
-                        item.discount = 0.0 if env.game.terminated else self.gamma
-                        item.next_value = (
-                            0.0
-                            if env.game.terminated
-                            else self._critic_value(env, item.player_id)
-                        )
-                        completed.append(item)
-                        self.trajectories.setdefault(pending_key, []).append(item)
-                    self.episodes.append(
-                        {
-                            "turns": env.game.turns_completed,
-                            "decisions": env.game.decision_id,
-                            "rounds": env.game.round_id,
-                            "scores": [p.score for p in env.game.players],
-                            "winners": env.game.winner_ids(),
-                            "truncated": env.game.truncated,
-                        }
-                    )
-                    self.episode_indices[env_id] += 1
-                    self.envs[env_id] = SelfPlayWrapper(
-                        self.num_players,
-                        seed=self.seed + env_id * 100003 + self.episode_indices[env_id],
-                        payment_mode=env.payment_mode,
-                        max_turns=self.max_turns,
-                    )
+                    self._finish_env(env_id, env, completed)
         batch = completed[:target]
         self.ready.extend(completed[target:])
         advantages = np.zeros(len(batch), dtype=np.float32)

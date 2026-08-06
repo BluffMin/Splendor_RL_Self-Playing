@@ -1,14 +1,16 @@
 # Splendor Self-Play Environment
 
-## Two-player PPO v0.4.2
+## Two-player PPO v0.4.3
 
 ```powershell
 python experiments/train_shared_ppo.py --config configs/shared_ppo_2p_smoke.yaml --run-dir runs/shared_ppo_2p_smoke --device cpu
-python experiments/train_shared_ppo.py --config configs/shared_ppo_2p_1m.yaml --run-dir runs/shared_ppo_2p_1m_seed42 --device cuda
-python experiments/evaluate_shared_ppo.py --checkpoint runs/shared_ppo_2p_1m_seed42/checkpoints/best_average_rank.pt --games-per-matchup 1000 --output-dir runs/shared_ppo_2p_1m_seed42/final_evaluation --device cuda --actor-only
+python .\experiments\train_shared_ppo.py --config .\configs\shared_ppo_2p_1m.yaml --run-dir .\runs\shared_ppo_2p_1m_seed42 --device cuda --progress always --stop-at-transitions 114688
+python .\experiments\train_shared_ppo.py --config .\configs\shared_ppo_2p_1m.yaml --run-dir .\runs\shared_ppo_2p_1m_seed42 --resume .\runs\shared_ppo_2p_1m_seed42\checkpoints\step_000114688.pt --device cuda --progress always --stop-at-transitions 311296
+python .\experiments\evaluate_shared_ppo.py --checkpoint .\runs\shared_ppo_2p_1m_seed42\checkpoints\best_average_rank.pt --games-per-matchup 1000 --output-dir .\runs\shared_ppo_2p_1m_seed42\final_evaluation --device cuda --actor-only --progress always
 ```
 
 See [two-player experiments](docs/two_player_experiments.md). The 1M schedule's first 100k threshold is reached at 114,688 transitions (7 updates).
+Progress uses stderr, is automatically disabled when redirected, and can be disabled explicitly with `--progress never`.
 
 ## v0.4.1 PPO stabilization
 
