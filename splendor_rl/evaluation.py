@@ -215,9 +215,9 @@ def evaluate_ladder(
                         doc["game_metadata"].update(
                             {
                                 "engine_version": "0.3.2",
-                                "rl_version": "0.4.2",
+                                "rl_version": "0.5.0",
                                 "num_players": num_players,
-                                "training_mode": "shared_parameter_self_play",
+                                "training_mode": "shared_current",
                                 "evaluation_truncated": game.truncated,
                                 "payment_mode": "canonical",
                                 "checkpoint": Path(checkpoint_path).name,
@@ -249,10 +249,10 @@ def evaluate_ladder(
     }
     aggregate = _stats(rows, num_players)
     summary = {
-        "rl_version": "0.4.3",
+        "rl_version": "0.5.0",
         "engine_version": "0.3.2",
         "num_players": num_players,
-        "training_mode": "shared_parameter_self_play",
+        "training_mode": "shared_current",
         "payment_mode": "canonical",
         "checkpoint_path": str(checkpoint_path),
         "transition_count": transition_count,

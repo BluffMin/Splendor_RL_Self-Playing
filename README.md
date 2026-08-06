@@ -1,5 +1,22 @@
 # Splendor Self-Play Environment
 
+## Two-player PPO league v0.5.0
+
+The league keeps a continuously trained Candidate, a gated frozen Champion, permanent
+Hall-of-Fame Champions, and capped recent Candidate snapshots. It uses PFSP to favor
+useful historical opponents while retaining current-policy self-play.
+
+```powershell
+python .\experiments\train_league_ppo.py --config .\configs\league_ppo_2p_smoke.yaml --run-dir .\runs\league_ppo_2p_v050_smoke --device cpu --progress always
+python .\experiments\train_league_ppo.py --config .\configs\league_ppo_2p_1m.yaml --run-dir .\runs\league_ppo_2p_1m_seed42 --initial-checkpoint .\runs\shared_ppo_2p_1m_seed42\checkpoints\best_average_rank.pt --device cuda --progress always
+python .\experiments\evaluate_league.py --run-dir .\runs\league_ppo_2p_1m_seed42 --games-per-matchup 1000 --device cuda --progress always --hall-of-fame --matchup-matrix
+```
+
+This is PPO-based league self-play, not an AlphaGo Zero or AlphaZero implementation:
+there is no MCTS and no tree-search visit-count target. See
+[league self-play](docs/league_selfplay.md), [promotion](docs/champion_promotion.md),
+and [PFSP](docs/pfsp.md).
+
 ## Two-player PPO v0.4.3
 
 ```powershell

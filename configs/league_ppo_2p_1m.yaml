@@ -1,0 +1,16 @@
+{
+  "seed": 42, "training_mode": "league_2p", "num_players": 2, "num_envs": 32,
+  "payment_mode": "canonical", "hidden_sizes": [512, 512, 512],
+  "transitions_per_update": 16384, "update_epochs": 4, "minibatch_size": 2048,
+  "learning_rate": 0.0003, "total_transitions": 1000000,
+  "checkpoint_interval": 100000, "evaluation_interval": 100000,
+  "evaluate_initial_policy": false, "max_turns": 300, "device": "cuda",
+  "current_selfplay_fraction": 0.20, "champion_fraction": 0.40,
+  "historical_pfsp_fraction": 0.40, "recent_snapshot_interval": 100000,
+  "max_recent_snapshots": 8, "promotion_interval": 250000,
+  "promotion_pair_count": 200, "promotion_bootstrap_samples": 5000,
+  "promotion_anchor_games_per_opponent": 100,
+  "promotion_historical_anchor_count": 3,
+  "matchup_matrix_interval": 500000, "matchup_matrix_games_per_pair": 50,
+  "matchup_matrix_max_policies": 12
+}

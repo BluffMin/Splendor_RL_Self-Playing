@@ -33,6 +33,7 @@ class PlayerTransition:
     round_id: int
     phase: str
     next_value: float = 0.0
+    learning_role: str = "selfplay_candidate"
 
 
 class RolloutCollector:

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.0 - Two-player PPO league self-play
+
+- Separated Candidate and Champion policies.
+- Added a frozen historical opponent pool and PFSP selection.
+- Added mixed current/champion/historical self-play and Candidate-only PPO trajectories.
+- Added paired-seat Champion promotion with bootstrap confidence intervals.
+- Added fixed-bot and historical regression gates and a Hall-of-Fame archive.
+- Added atomic league state, resume, matchup matrices, and population diagnostics.
+- Preserved existing two- and four-player `shared_current` PPO modes.
+
 ## v0.4.3 - Progress monitoring and staged training runs
 
 - Added tqdm-based training and fixed-bot evaluation progress.

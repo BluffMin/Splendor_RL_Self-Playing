@@ -1,5 +1,9 @@
 # Shared-parameter PPO
 
+The original two-, three-, and four-player mode is named `shared_current` in v0.5.0
+and remains available through `train_shared_ppo.py`. The separate `league_2p` mode
+reuses the same masked PPO, GAE, actor, critic, schedules, and checkpoint machinery.
+
 v0.4.1 stabilizes the single-process synchronous PPO baseline with numbered checkpoints, initial/periodic fixed-bot evaluation, best-checkpoint selection, resume-safe LR/entropy schedules, and epoch-mean target-KL stopping. The critic exposes private reservations but not hidden deck order.
 
 v0.4.2 uses the same shared policy for 2, 3, or 4 players. Evaluation matchups, policy-seat rotation, seat metrics, replay metadata, and checkpoint validation all follow `num_players`.

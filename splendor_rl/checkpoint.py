@@ -31,12 +31,12 @@ def save_checkpoint(
     target.parent.mkdir(parents=True, exist_ok=True)
     current_lr = float(optimizer.param_groups[0]["lr"])
     payload = {
-        "schema_version": "0.4.3",
+        "schema_version": "0.5.0",
         "engine_version": "0.3.2",
-        "rl_version": "0.4.3",
+        "rl_version": "0.5.0",
         "num_players": config.num_players,
         "max_players_in_observation": 4,
-        "training_mode": "shared_parameter_self_play",
+        "training_mode": getattr(config, "training_mode", "shared_current"),
         "payment_mode": config.payment_mode,
         "global_transition_count": global_transition_count,
         "update_index": update_index,
@@ -83,7 +83,7 @@ def load_checkpoint(
 ):
     data = torch.load(path, map_location=map_location, weights_only=False)
     version = data.get("schema_version")
-    if version not in {"0.4.0", "0.4.1", "0.4.2", "0.4.3"}:
+    if version not in {"0.4.0", "0.4.1", "0.4.2", "0.4.3", "0.5.0"}:
         raise ValueError("unsupported checkpoint schema")
     config_players = data.get("config", {}).get("num_players")
     top_players = data.get("num_players", config_players)
