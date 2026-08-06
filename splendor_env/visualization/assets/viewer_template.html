@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Splendor Replay Viewer</title>
+  <style>/*__VIEWER_CSS__*/</style>
+</head>
+<body>
+  <main id="app">
+    <header class="topbar">
+      <div><h1>Splendor Replay</h1><div id="status" aria-live="polite"></div></div>
+      <div class="selectors">
+        <label>Perspective <select id="perspective"></select></label>
+        <label>Layout <select id="layout"><option value="table">Table</option><option value="egocentric">Egocentric</option></select></label>
+        <label>Mode <select id="replayMode"><option value="decision">Decision</option><option value="turn">Turn</option></select></label>
+        <label>Speed <select id="speed"><option value="4000">0.25×</option><option value="2000">0.5×</option><option value="1000" selected>1×</option><option value="500">2×</option></select></label>
+        <label><input id="showIds" type="checkbox"> Card IDs</label>
+        <label><input id="showPurchased" type="checkbox"> Purchased details</label>
+        <label><input id="showLegal" type="checkbox"> Legal actions</label>
+      </div>
+    </header>
+    <nav class="controls" aria-label="Replay controls">
+      <button id="first" title="Home">|◀ First</button><button id="prevTurn">|&lt; Previous turn</button>
+      <button id="prev">&lt; Previous decision</button><button id="play">▶ Play</button>
+      <button id="next">Next decision &gt;</button><button id="nextTurn">Next turn &gt;|</button>
+      <button id="last" title="End">Last ▶|</button>
+      <input id="eventSlider" type="range" min="0" value="0" aria-label="Replay event">
+      <span id="counter"></span><span id="legalActions" class="muted"></span>
+    </nav>
+    <section id="pending" class="pending" aria-live="polite"></section>
+    <section><h2>Public nobles</h2><div id="nobles" class="nobles"></div></section>
+    <section id="market" class="market"></section>
+    <section><h2>Bank</h2><div id="bank" class="chips"></div></section>
+    <section><h2>Players</h2><div id="players" class="players"></div></section>
+    <section class="bottom"><div><h2>Last action</h2><div id="lastAction"></div><div id="delta"></div></div><div><h2>Event log</h2><div id="eventLog" class="event-log"></div></div></section>
+  </main>
+  <script id="replay-data" type="application/json">/*__REPLAY_DATA__*/</script>
+  <script>/*__VIEWER_JS__*/</script>
+</body>
+</html>

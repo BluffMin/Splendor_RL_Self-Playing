@@ -73,6 +73,50 @@ python -m splendor_env.replay runs/demo_games/game_0000.json --perspective 2 --s
 
 `summary`, `actions`, `full` 기록 레벨을 지원합니다. `full`은 decision event와 실제 턴 종료 snapshot을 함께 저장합니다. recorder는 passive listener이므로 observation, reward, action mask를 바꾸지 않습니다.
 
+## 경기 시각화
+
+기록 JSON을 외부 서버나 CDN이 필요 없는 single-file HTML replay로 변환합니다.
+
+```bash
+python -m splendor_env.visualization.html_export \
+    runs/demo_games/game_0000.json \
+    --output runs/demo_games/game_0000_viewer.html
+```
+
+브라우저 상단에서 Current player, Player 0~3, Omniscient 관점과 table/egocentric 배치를 선택할 수 있습니다. 이전·다음 decision/turn, 자동 재생, slider, 속도, 구매 카드 상세, 디버그 card ID 표시를 지원합니다.
+
+정보 유출 검사용 export는 숨은 카드 데이터 자체를 제거합니다.
+
+```bash
+python -m splendor_env.visualization.html_export \
+    runs/demo_games/game_0000.json \
+    --output runs/demo_games/p1_viewer.html \
+    --data-mode perspective-sanitized-data \
+    --perspective 1
+```
+
+최종 패 비교:
+
+```bash
+python -m splendor_env.visualization.compare_games \
+    runs/demo_games/game_0000.json \
+    runs/demo_games/game_0001.json \
+    runs/demo_games/game_0002.json \
+    --output runs/demo_games/compare_final_boards.html
+```
+
+한 경기를 생성하고 즉시 시각화하려면:
+
+```bash
+python examples/export_visual_replay.py \
+    --players 4 \
+    --agents greedy greedy random random \
+    --seed 42 \
+    --output-dir runs/visual_demo
+```
+
+브라우저에서 `runs/visual_demo/game_viewer.html`을 열면 됩니다.
+
 직접 코드에서 사용할 때:
 
 ```python

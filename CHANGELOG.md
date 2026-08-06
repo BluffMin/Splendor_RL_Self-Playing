@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 — Visual board and replay viewer
+
+- Added an offline browser board visualization with original CSS card/token graphics.
+- Added adaptive 2/3/4-player table and egocentric layouts.
+- Added perspective-safe private reservation rendering and sanitized exports.
+- Added decision/turn replay controls, autoplay, event log, and state-delta highlights.
+- Added final-hand detail views and multi-game final-board comparison.
+- No game rule, action mask, reward, observation, or state-transition changes.
+
 ## 0.3.0
 
 - Standardized gem order and stable human-readable card/noble IDs.
