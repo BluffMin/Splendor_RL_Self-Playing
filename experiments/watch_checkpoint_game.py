@@ -12,6 +12,7 @@ from splendor_env.wrappers import CanonicalPaymentWrapper
 from splendor_rl.checkpoint import load_checkpoint
 from splendor_rl.evaluation import actor_action, make_bot
 from splendor_rl.models import SharedActor
+from splendor_rl.player_count import validate_num_players
 
 
 def main():
@@ -26,7 +27,19 @@ def main():
     p.add_argument("--show-policy", action="store_true")
     p.add_argument("--top-k-actions", type=int, default=5)
     a = p.parse_args()
+    validate_num_players(a.players)
+    if len(a.opponents) != a.players - 1:
+        p.error(
+            f"--opponents requires exactly {a.players - 1} names for {a.players} players"
+        )
     data = torch.load(a.checkpoint, map_location="cpu", weights_only=False)
+    checkpoint_players = data.get(
+        "num_players", data.get("config", {}).get("num_players")
+    )
+    if checkpoint_players != a.players:
+        p.error(
+            f"checkpoint num_players={checkpoint_players} does not match --players {a.players}"
+        )
     sizes = data["observation_sizes"]
     actor = SharedActor(sizes["actor"], sizes["action"], data["config"]["hidden_sizes"])
     load_checkpoint(a.checkpoint, actor, expected_sizes=sizes, restore_rng=False)

@@ -16,6 +16,11 @@ from splendor_env.visualization.html_export import export_replay
 from splendor_env.wrappers import CanonicalPaymentWrapper
 
 from .distributions import MaskedCategorical
+from .player_count import (
+    balanced_policy_seats,
+    build_fixed_bot_matchups,
+    validate_num_players,
+)
 
 
 class NobleAgent(GreedyAgent):
@@ -57,7 +62,7 @@ def actor_action(actor, game, player, device="cpu", deterministic=True):
     return int(action.item())
 
 
-def _stats(rows):
+def _stats(rows, num_players):
     result = {
         "games": len(rows),
         "average_rank": float(np.mean([r["rank"] for r in rows])),
@@ -68,48 +73,64 @@ def _stats(rows):
         "tie_rate": float(np.mean([r["winner_count"] > 1 for r in rows])),
         "average_turns": float(np.mean([r["turns"] for r in rows])),
     }
-    for seat in range(4):
+    seat_metrics = {}
+    for seat in range(num_players):
         values = [r for r in rows if r["policy_seat"] == seat]
-        result[f"seat_{seat}_average_rank"] = (
-            float(np.mean([r["rank"] for r in values])) if values else None
-        )
+        seat_metrics[str(seat)] = {
+            "games": len(values),
+            "average_rank": float(np.mean([r["rank"] for r in values]))
+            if values
+            else None,
+            "fractional_first_place_rate": float(
+                np.mean([r["fractional_win"] for r in values])
+            )
+            if values
+            else None,
+            "average_score": float(np.mean([r["score"] for r in values]))
+            if values
+            else None,
+        }
+        result[f"seat_{seat}_games"] = len(values)
+        result[f"seat_{seat}_average_rank"] = seat_metrics[str(seat)]["average_rank"]
+        result[f"seat_{seat}_first_place_rate"] = seat_metrics[str(seat)][
+            "fractional_first_place_rate"
+        ]
+        result[f"seat_{seat}_average_score"] = seat_metrics[str(seat)]["average_score"]
+    result["seat_metrics"] = seat_metrics
     return result
 
 
 def evaluate_ladder(
     actor,
-    output_dir,
-    games_per_matchup=8,
-    seed=100000,
-    device="cpu",
-    save_replays=True,
     *,
+    output_dir,
+    games_per_matchup,
+    evaluation_seed_base,
+    device,
+    num_players,
     deterministic=True,
     checkpoint_path="",
     transition_count=0,
+    save_replays=True,
 ):
+    num_players = validate_num_players(num_players)
     was_training = actor.training
     actor.eval()
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     rows = []
-    matchups = {
-        "policy_vs_random": ["random"] * 3,
-        "policy_vs_greedy": ["greedy"] * 3,
-        "policy_vs_shortest": ["shortest"] * 3,
-        "policy_vs_noble": ["noble"] * 3,
-        "policy_vs_blocking": ["blocking"] * 3,
-        "mixed_ladder": ["greedy", "shortest", "blocking"],
-    }
+    matchups = build_fixed_bot_matchups(num_players)
     actual_games = max(1, games_per_matchup)
+    seats = balanced_policy_seats(num_players, actual_games)
     try:
         with torch.no_grad():
             for matchup_index, (matchup, opponents) in enumerate(matchups.items()):
                 target = output / matchup
                 target.mkdir(exist_ok=True)
                 for index in range(actual_games):
-                    seat = index % 4
-                    game = SplendorGame(4, seed=seed + matchup_index * 100_000 + index)
+                    seat = seats[index]
+                    game_seed = evaluation_seed_base + matchup_index * 100_000 + index
+                    game = SplendorGame(num_players, seed=game_seed)
                     wrapper = CanonicalPaymentWrapper(game)
                     recorder = (
                         EpisodeRecorder(target / "game_0000.json")
@@ -124,10 +145,15 @@ def evaluate_ladder(
                         if p == seat
                         else make_bot(
                             next(bot_names),
-                            seed + matchup_index * 100_000 + index * 17 + p,
+                            game_seed * 17 + p,
                         )
-                        for p in range(4)
+                        for p in range(num_players)
                     ]
+                    try:
+                        next(bot_names)
+                        raise AssertionError("unused fixed-bot opponent")
+                    except StopIteration:
+                        pass
                     while not game.done:
                         if game.turns_completed >= 300:
                             game.truncate("evaluation_max_turns")
@@ -158,15 +184,25 @@ def evaluate_ladder(
                             "fractional_win": fractional,
                             "winner_count": len(game.winner_ids()),
                             "turns": game.turns_completed,
-                            "seed": seed + matchup_index * 100_000 + index,
+                            "seed": game_seed,
                         }
                     )
                     if recorder:
                         doc = recorder.finalize()
+                        if game.truncated and doc["events"]:
+                            # Safety truncation is evaluator-owned, not an engine decision event.
+                            # Keep the canonical replay boundary at the last recorded transition.
+                            replay_hash = doc["events"][-1]["post_state_hash"]
+                            doc["final_state_hash"] = replay_hash
+                            doc["result"]["final_state_hash"] = replay_hash
+                            doc["final_summary"]["state_hash"] = replay_hash
                         doc["game_metadata"].update(
                             {
                                 "engine_version": "0.3.2",
-                                "rl_version": "0.4.1",
+                                "rl_version": "0.4.2",
+                                "num_players": num_players,
+                                "training_mode": "shared_parameter_self_play",
+                                "evaluation_truncated": game.truncated,
                                 "payment_mode": "canonical",
                                 "checkpoint": Path(checkpoint_path).name,
                             }
@@ -191,15 +227,19 @@ def evaluate_ladder(
         writer.writeheader()
         writer.writerows(rows)
     matchup_stats = {
-        name: _stats([r for r in rows if r["matchup"] == name]) for name in matchups
+        name: _stats([r for r in rows if r["matchup"] == name], num_players)
+        for name in matchups
     }
-    aggregate = _stats(rows)
+    aggregate = _stats(rows, num_players)
     summary = {
-        "rl_version": "0.4.1",
+        "rl_version": "0.4.2",
         "engine_version": "0.3.2",
+        "num_players": num_players,
+        "training_mode": "shared_parameter_self_play",
+        "payment_mode": "canonical",
         "checkpoint_path": str(checkpoint_path),
         "transition_count": transition_count,
-        "evaluation_seed_base": seed,
+        "evaluation_seed_base": evaluation_seed_base,
         "games_per_matchup_requested": games_per_matchup,
         "games_per_matchup_actual": actual_games,
         "deterministic": deterministic,

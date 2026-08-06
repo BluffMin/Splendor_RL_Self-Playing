@@ -10,6 +10,19 @@ from .evaluation import evaluate_ladder
 from .models import SharedActor
 
 
+def resolve_checkpoint_num_players(data, requested=None):
+    checkpoint_players = data.get(
+        "num_players", data.get("config", {}).get("num_players")
+    )
+    if checkpoint_players is None:
+        raise ValueError("checkpoint does not contain num_players")
+    if requested is not None and requested != checkpoint_players:
+        raise ValueError(
+            f"Checkpoint was trained with num_players={checkpoint_players}, but evaluation requested {requested}."
+        )
+    return checkpoint_players
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True)
@@ -17,8 +30,10 @@ def main(argv=None):
     p.add_argument("--output-dir", required=True)
     p.add_argument("--device", default="cpu")
     p.add_argument("--actor-only", action="store_true")
+    p.add_argument("--num-players", type=int)
     a = p.parse_args(argv)
     data = torch.load(a.checkpoint, map_location=a.device, weights_only=False)
+    checkpoint_players = resolve_checkpoint_num_players(data, a.num_players)
     sizes = data["observation_sizes"]
     actor = SharedActor(
         sizes["actor"], sizes["action"], data["config"]["hidden_sizes"]
@@ -34,9 +49,11 @@ def main(argv=None):
         json.dumps(
             evaluate_ladder(
                 actor,
-                a.output_dir,
-                a.games_per_matchup,
+                output_dir=a.output_dir,
+                games_per_matchup=a.games_per_matchup,
+                evaluation_seed_base=100000,
                 device=a.device,
+                num_players=checkpoint_players,
                 checkpoint_path=a.checkpoint,
                 transition_count=data.get("global_transition_count", 0),
             ),

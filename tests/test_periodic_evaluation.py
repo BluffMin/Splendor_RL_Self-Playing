@@ -8,7 +8,8 @@ def test_evaluation_seed_schema_and_training_mode_restore(tmp_path):
     actor = SharedActor(475, 373, [8])
     actor.train()
     summary = evaluate_ladder(
-        actor, tmp_path, games_per_matchup=1, seed=123, save_replays=False
+        actor, output_dir=tmp_path, games_per_matchup=1,
+        evaluation_seed_base=123, device="cpu", num_players=4, save_replays=False
     )
     stored = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert (

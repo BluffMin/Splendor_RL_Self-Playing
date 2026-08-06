@@ -24,9 +24,13 @@ def save_checkpoint(
     target.parent.mkdir(parents=True, exist_ok=True)
     current_lr = float(optimizer.param_groups[0]["lr"])
     payload = {
-        "schema_version": "0.4.1",
+        "schema_version": "0.4.2",
         "engine_version": "0.3.2",
-        "rl_version": "0.4.1",
+        "rl_version": "0.4.2",
+        "num_players": config.num_players,
+        "max_players_in_observation": 4,
+        "training_mode": "shared_parameter_self_play",
+        "payment_mode": config.payment_mode,
         "global_transition_count": global_transition_count,
         "update_index": update_index,
         "actor_state_dict": actor.state_dict(),
@@ -72,8 +76,15 @@ def load_checkpoint(
 ):
     data = torch.load(path, map_location=map_location, weights_only=False)
     version = data.get("schema_version")
-    if version not in {"0.4.0", "0.4.1"}:
+    if version not in {"0.4.0", "0.4.1", "0.4.2"}:
         raise ValueError("unsupported checkpoint schema")
+    config_players = data.get("config", {}).get("num_players")
+    top_players = data.get("num_players", config_players)
+    if top_players is None:
+        raise ValueError("checkpoint does not contain num_players")
+    if config_players is not None and top_players != config_players:
+        raise ValueError("checkpoint num_players metadata is inconsistent")
+    data["num_players"] = top_players
     if expected_sizes and data["observation_sizes"] != expected_sizes:
         raise ValueError("checkpoint observation/action sizes differ")
     if version == "0.4.0":

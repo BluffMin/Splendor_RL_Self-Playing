@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.2 - First-class two-player self-play support
+
+- Removed four-player assumptions from fixed-bot evaluation.
+- Added player-count-aware matchups, balanced seat rotation, and dynamic seat metrics.
+- Added two-player smoke and one-million-transition configurations.
+- Added player-count checkpoint metadata and validation.
+- Added two-player replay validation while preserving four-player compatibility.
+
 ## v0.4.1 - PPO training stabilization
 
 - Corrected truncation-state critic bootstrapping.

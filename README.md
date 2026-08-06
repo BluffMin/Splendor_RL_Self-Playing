@@ -1,5 +1,15 @@
 # Splendor Self-Play Environment
 
+## Two-player PPO v0.4.2
+
+```powershell
+python experiments/train_shared_ppo.py --config configs/shared_ppo_2p_smoke.yaml --run-dir runs/shared_ppo_2p_smoke --device cpu
+python experiments/train_shared_ppo.py --config configs/shared_ppo_2p_1m.yaml --run-dir runs/shared_ppo_2p_1m_seed42 --device cuda
+python experiments/evaluate_shared_ppo.py --checkpoint runs/shared_ppo_2p_1m_seed42/checkpoints/best_average_rank.pt --games-per-matchup 1000 --output-dir runs/shared_ppo_2p_1m_seed42/final_evaluation --device cuda --actor-only
+```
+
+See [two-player experiments](docs/two_player_experiments.md). The 1M schedule's first 100k threshold is reached at 114,688 transitions (7 updates).
+
 ## v0.4.1 PPO stabilization
 
 This patch adds correct post-truncation bootstrap values, periodic evaluation, numbered and best checkpoints, linear LR decay, epoch-mean target-KL stopping, and v0.4.0 checkpoint compatibility. The critic sees private reservation payloads but not full hidden deck order.

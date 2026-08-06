@@ -72,6 +72,10 @@ def train(config: PPOConfig, run_dir, resume=None, *, allow_schedule_override=Fa
         data = load_checkpoint(
             resume, actor, critic, optimizer, sizes, map_location=device
         )
+        if data["num_players"] != config.num_players:
+            raise ValueError(
+                f"checkpoint num_players={data['num_players']} does not match config num_players={config.num_players}"
+            )
         transitions = data["global_transition_count"]
         updates = data["update_index"]
         checkpoint_best = data.get("best_metrics", {})
@@ -149,11 +153,11 @@ def train(config: PPOConfig, run_dir, resume=None, *, allow_schedule_override=Fa
         try:
             summary = evaluate_ladder(
                 actor,
-                target,
-                config.evaluation_games_per_matchup,
-                config.evaluation_seed_base,
-                device,
-                True,
+                output_dir=target,
+                games_per_matchup=config.evaluation_games_per_matchup,
+                evaluation_seed_base=config.evaluation_seed_base,
+                device=device,
+                num_players=config.num_players,
                 deterministic=config.evaluation_deterministic,
                 checkpoint_path=str(checkpoint_path),
                 transition_count=count,
@@ -273,6 +277,11 @@ def train(config: PPOConfig, run_dir, resume=None, *, allow_schedule_override=Fa
     )
     save_at(transitions)
     summary = {
+        "rl_version": "0.4.2",
+        "engine_version": "0.3.2",
+        "num_players": config.num_players,
+        "training_mode": "shared_parameter_self_play",
+        "payment_mode": config.payment_mode,
         "started_at": started,
         "ended_at": datetime.now(timezone.utc).isoformat(),
         "resolved_config": config.to_dict(),

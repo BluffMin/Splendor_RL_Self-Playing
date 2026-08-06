@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .player_count import validate_num_players
+
 
 @dataclass
 class PPOConfig:
@@ -62,6 +64,7 @@ class PPOConfig:
         return asdict(self)
 
     def validate(self) -> None:
+        validate_num_players(self.num_players)
         for name in ("checkpoint_interval", "evaluation_interval"):
             value = getattr(self, name)
             if value is not None and value <= 0:
