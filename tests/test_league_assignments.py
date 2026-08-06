@@ -6,6 +6,16 @@ def test_league_rejects_non_two_player_config():
         LeagueConfig(num_players=4).validate()
 
 
+def test_league_config_loads_real_yaml(tmp_path):
+    path = tmp_path / "league.yaml"
+    path.write_text(
+        "training_mode: league_2p\nnum_players: 2\ntotal_transitions: 20000000\n",
+        encoding="utf-8",
+    )
+    config = LeagueConfig.load(path)
+    assert config.total_transitions == 20_000_000
+
+
 from splendor_rl.league.pool import OpponentPool
 from splendor_rl.league.records import MatchRecords
 from splendor_rl.league.rollout import LeagueRolloutCollector

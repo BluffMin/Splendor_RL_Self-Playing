@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 from splendor_rl.config import PPOConfig
 
@@ -37,7 +38,10 @@ class LeagueConfig(PPOConfig):
 
     @classmethod
     def load(cls, path):
-        value = cls(**json.loads(Path(path).read_text(encoding="utf-8")))
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise TypeError("league config must contain a YAML mapping")
+        value = cls(**data)
         value.validate()
         return value
 
