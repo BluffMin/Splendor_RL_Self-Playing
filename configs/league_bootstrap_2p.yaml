@@ -1,0 +1,16 @@
+bootstrap:
+  fixed_bot_games_per_matchup: 1000
+  pair_count: 500
+  pool_size: 4
+  score_tolerance: 0.01
+  saturated_anchors: [random, shortest]
+  hard_anchors: [greedy, noble, blocking]
+  checkpoint_sources:
+    include_best_average_rank: true
+    include_best_vs_random: true
+    include_best_vs_greedy: true
+    include_latest: true
+    numbered_checkpoint_limit: 6
+  bootstrap_samples: 10000
+  confidence: 0.95
+  evaluation_seed_base: 3000000

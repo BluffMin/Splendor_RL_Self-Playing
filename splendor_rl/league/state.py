@@ -19,6 +19,6 @@ def load_league_state(path):
     if not target.exists():
         return None
     value = json.loads(target.read_text(encoding="utf-8"))
-    if value.get("schema_version") != "0.5.0":
+    if value.get("schema_version") not in {"0.5.0", "0.5.1"}:
         raise ValueError("unsupported league state schema")
     return value

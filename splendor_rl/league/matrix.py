@@ -46,7 +46,7 @@ def build_matchup_matrix(
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": "0.5.0",
+        "schema_version": "0.5.1",
         "policy_ids": ids,
         "matrix": matrix.tolist(),
         "games_per_pair": pair_count * 2,

@@ -34,6 +34,7 @@ from .matrix import build_matchup_matrix
 from .pool import FrozenOpponent, OpponentPool, actor_sha256
 from .promotion import (
     actor_vs_bot_score,
+    anchor_group_regression_decision,
     bootstrap_confidence_interval,
     paired_actor_evaluation,
     promotion_decision,
@@ -75,7 +76,7 @@ def _save_state(
     atomic_json_write(
         path,
         {
-            "schema_version": "0.5.0",
+            "schema_version": "0.5.1",
             "num_players": 2,
             "candidate": {
                 "latest_checkpoint": "candidate/checkpoints/latest.pt",
@@ -134,6 +135,7 @@ def train_league(
     run_dir,
     *,
     initial_checkpoint=None,
+    bootstrap_manifest=None,
     resume=None,
     stop_at_transitions=None,
     progress_config=None,
@@ -159,10 +161,28 @@ def train_league(
         "critic": SelfPlayWrapper.critic_state_size,
         "action": SelfPlayWrapper.action_size,
     }
+    manifest = None
+    bootstrap_checkpoint = None
+    if bootstrap_manifest:
+        manifest = json.loads(Path(bootstrap_manifest).read_text(encoding="utf-8"))
+        if manifest.get("num_players") != 2 or not manifest.get("policies"):
+            raise ValueError("bootstrap manifest must contain two-player policies")
+        selected_id = manifest.get("selected_champion_id")
+        selected = next(
+            (
+                item
+                for item in manifest["policies"]
+                if item["candidate_id"] == selected_id
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError("selected bootstrap Champion is missing from manifest")
+        bootstrap_checkpoint = selected["checkpoint_path"]
     architecture_data = None
-    if resume or initial_checkpoint:
+    if resume or initial_checkpoint or bootstrap_checkpoint:
         architecture_data = _adopt_checkpoint_architecture(
-            config, resume or initial_checkpoint, sizes
+            config, resume or initial_checkpoint or bootstrap_checkpoint, sizes
         )
     actor = SharedActor(sizes["actor"], sizes["action"], config.hidden_sizes).to(device)
     critic = PrivilegedCritic(sizes["critic"], config.hidden_sizes).to(device)
@@ -194,7 +214,7 @@ def train_league(
             raise ValueError(
                 "candidate checkpoint and league_state.json are inconsistent"
             )
-    elif initial_checkpoint:
+    elif initial_checkpoint or bootstrap_checkpoint:
         actor.load_state_dict(architecture_data["actor_state_dict"])
         if "critic_state_dict" in architecture_data:
             critic.load_state_dict(architecture_data["critic_state_dict"])
@@ -219,7 +239,46 @@ def train_league(
             actor_obs_size=sizes["actor"],
             action_size=sizes["action"],
             bootstrap_champion=True,
+            source_checkpoint=str(bootstrap_checkpoint or initial_checkpoint or ""),
         )
+        if manifest:
+            selected_hash = actor_sha256(actor)
+            for item in manifest["policies"]:
+                if item["candidate_id"] == manifest["selected_champion_id"]:
+                    if item["actor_sha256"] != selected_hash:
+                        raise ValueError("bootstrap Champion actor hash mismatch")
+                    continue
+                data = torch.load(
+                    item["checkpoint_path"], map_location=device, weights_only=False
+                )
+                if data.get("observation_sizes") != sizes:
+                    raise ValueError("bootstrap historical observation schema mismatch")
+                if (
+                    data.get("num_players", data.get("config", {}).get("num_players"))
+                    != 2
+                ):
+                    raise ValueError("bootstrap historical policy must be two-player")
+                if list(data["config"]["hidden_sizes"]) != list(config.hidden_sizes):
+                    raise ValueError("bootstrap policies must share one architecture")
+                historical_actor = SharedActor(
+                    sizes["actor"], sizes["action"], config.hidden_sizes
+                ).to(device)
+                historical_actor.load_state_dict(data["actor_state_dict"])
+                if actor_sha256(historical_actor) != item["actor_sha256"]:
+                    raise ValueError("bootstrap historical actor hash mismatch")
+                pool.add_snapshot(
+                    historical_actor,
+                    opponent_id=item.get(
+                        "opponent_id", f"bootstrap_{item['candidate_id']}"
+                    ),
+                    source_type="bootstrap_historical",
+                    created_transition=item["transition_count"],
+                    champion_version=None,
+                    training_seed=config.seed,
+                    actor_obs_size=sizes["actor"],
+                    action_size=sizes["action"],
+                    source_checkpoint=item["checkpoint_path"],
+                )
     champion_version = state["champion"]["version"] if state else 0
     champion_id = state["champion"]["opponent_id"] if state else "champion_0000"
     _update_current_champion(run, pool, champion_id)
@@ -333,9 +392,8 @@ def train_league(
         )
         anchors = {}
         candidate_anchor_scores, champion_anchor_scores = {}, {}
-        for index, bot in enumerate(
-            ("random", "greedy", "shortest", "noble", "blocking")
-        ):
+        ordered_bots = (*config.hard_anchors, *config.saturated_anchors)
+        for index, bot in enumerate(ordered_bots):
             seed = config.seed + 700_000 + count + index * 10_000
             candidate_result = actor_vs_bot_score(
                 candidate,
@@ -354,9 +412,19 @@ def train_league(
                 candidate_result["score"],
                 champion_result["score"],
             )
-        historical = [item for item in pool.hall_of_fame_ids if item != champion_id][
+        anchor_gate = anchor_group_regression_decision(
+            candidate_anchor_scores,
+            champion_anchor_scores,
+            hard_anchors=config.hard_anchors,
+            saturated_anchors=config.saturated_anchors,
+            max_hard_aggregate=config.promotion_max_hard_anchor_aggregate_regression,
+            max_single_hard=config.promotion_max_single_hard_anchor_regression,
+            max_saturated=config.promotion_max_saturated_anchor_regression,
+        )
+        historical = [item for item in pool.historical_ids(champion_id)][
             : config.promotion_historical_anchor_count
         ]
+        historical_candidate_scores, historical_champion_scores = {}, {}
         for index, opponent_id in enumerate(historical):
             opponent = pool.load(opponent_id)
             seed = config.seed + 800_000 + count + index * 10_000
@@ -372,17 +440,19 @@ def train_league(
                 pair_count=max(1, config.promotion_anchor_games_per_opponent // 2),
                 seed_base=seed,
             )
-            candidate_anchor_scores[opponent_id] = float(np.mean(c["pair_scores"]))
-            champion_anchor_scores[opponent_id] = float(np.mean(h["pair_scores"]))
+            historical_candidate_scores[opponent_id] = float(np.mean(c["pair_scores"]))
+            historical_champion_scores[opponent_id] = float(np.mean(h["pair_scores"]))
         regression = regression_decision(
-            candidate_anchor_scores,
-            champion_anchor_scores,
+            historical_candidate_scores,
+            historical_champion_scores,
             max_aggregate=config.max_anchor_aggregate_regression,
             max_single=config.max_single_anchor_regression,
         )
         if not regression["passed"]:
             reasons.append("regression_gate_failed")
-        promoted = head_passed and regression["passed"]
+        if not anchor_gate["passed"]:
+            reasons.extend(anchor_gate["reasons"])
+        promoted = head_passed and regression["passed"] and anchor_gate["passed"]
         old_champion = champion_id
         if promoted:
             champion_version += 1
@@ -401,7 +471,7 @@ def train_league(
             collector.champion_id = champion_id
             _update_current_champion(run, pool, champion_id)
         result = {
-            "schema_version": "0.5.0",
+            "schema_version": "0.5.1",
             "candidate_transition": count,
             "champion_version": champion_version,
             "evaluated_champion_id": old_champion,
@@ -412,6 +482,11 @@ def train_league(
                 "ci_upper": ci["upper_confidence_bound"],
             },
             "anchors": anchors,
+            "anchor_groups": {
+                "hard": list(config.hard_anchors),
+                "saturated": list(config.saturated_anchors),
+            },
+            "hard_anchor_gate": anchor_gate,
             "regression_gate": regression,
             "promoted": promoted,
             "reasons": reasons,
@@ -578,7 +653,7 @@ def train_league(
         if episode["candidate_score"] == 0.5
     ]
     summary = {
-        "rl_version": "0.5.0",
+        "rl_version": "0.5.1",
         "training_mode": "league_2p",
         "started_at": started,
         "ended_at": datetime.now(timezone.utc).isoformat(),

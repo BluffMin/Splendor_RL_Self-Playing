@@ -31,6 +31,13 @@ class LeagueConfig(PPOConfig):
     promotion_historical_anchor_count: int = 3
     max_anchor_aggregate_regression: float = 0.03
     max_single_anchor_regression: float = 0.07
+    saturated_anchors: tuple[str, ...] = ("random", "shortest")
+    hard_anchors: tuple[str, ...] = ("greedy", "noble", "blocking")
+    promotion_max_hard_anchor_aggregate_regression: float = 0.02
+    promotion_max_single_hard_anchor_regression: float = 0.05
+    promotion_max_saturated_anchor_regression: float = 0.04
+    scripted_training_fraction: float = 0.0
+    tutor_trace_games_per_matchup: int = 0
     matchup_matrix_interval: int = 500_000
     matchup_matrix_games_per_pair: int = 100
     matchup_matrix_max_policies: int = 12

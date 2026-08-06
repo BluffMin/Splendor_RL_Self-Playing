@@ -69,6 +69,42 @@ def regression_decision(
     }
 
 
+def anchor_group_regression_decision(
+    candidate_scores,
+    champion_scores,
+    *,
+    hard_anchors=("greedy", "noble", "blocking"),
+    saturated_anchors=("random", "shortest"),
+    max_hard_aggregate=0.02,
+    max_single_hard=0.05,
+    max_saturated=0.04,
+):
+    hard = {
+        name: champion_scores[name] - candidate_scores[name] for name in hard_anchors
+    }
+    saturated = {
+        name: champion_scores[name] - candidate_scores[name]
+        for name in saturated_anchors
+    }
+    hard_aggregate = float(np.mean(list(hard.values())))
+    saturated_aggregate = float(np.mean(list(saturated.values())))
+    reasons = []
+    if hard_aggregate > max_hard_aggregate:
+        reasons.append("hard_anchor_aggregate_regression")
+    if max(hard.values()) > max_single_hard:
+        reasons.append("single_hard_anchor_regression")
+    if max(saturated.values()) > max_saturated:
+        reasons.append("saturated_anchor_regression")
+    return {
+        "passed": not reasons,
+        "hard_anchor_regressions": hard,
+        "hard_anchor_aggregate_regression": hard_aggregate,
+        "saturated_anchor_regressions": saturated,
+        "saturated_anchor_aggregate_regression": saturated_aggregate,
+        "reasons": reasons,
+    }
+
+
 def frozen_copy(actor, opponent_id, device="cpu"):
     cloned = copy.deepcopy(actor)
     metadata = OpponentMetadata(
@@ -153,7 +189,7 @@ def play_actor_game(
         document["game_metadata"].update(replay_metadata or {})
         document["game_metadata"].update(
             {
-                "rl_version": "0.5.0",
+                "rl_version": "0.5.1",
                 "training_mode": "league_2p",
                 "actor_public_observation_version": "0.3.2",
                 "action_mask_version": "0.3.2",
@@ -181,6 +217,8 @@ def paired_actor_evaluation(
 ):
     pair_scores = []
     p0_scores, p1_scores, rounds = [], [], []
+    win_rounds, loss_rounds, tie_rounds = [], [], []
+    player_turns, decisions = [], []
     for index in range(pair_count):
         seed = seed_base + index
         replay_a = (
@@ -216,6 +254,13 @@ def paired_actor_evaluation(
         p1_scores.append(p1)
         pair_scores.append((p0 + p1) / 2.0)
         rounds.extend([game_a.round_id, game_b.round_id])
+        for score, game in ((p0, game_a), (p1, game_b)):
+            target = (
+                win_rounds if score == 1 else loss_rounds if score == 0 else tie_rounds
+            )
+            target.append(game.round_id)
+            player_turns.append(game.turns_completed)
+            decisions.append(game.decision_id)
         if progress:
             progress.update(2, matchup=matchup_label, seat="paired")
     return {
@@ -225,12 +270,34 @@ def paired_actor_evaluation(
         "candidate_as_p0_score": float(np.mean(p0_scores)),
         "candidate_as_p1_score": float(np.mean(p1_scores)),
         "seat_gap": float(abs(np.mean(p0_scores) - np.mean(p1_scores))),
+        "raw_candidate_p0_score": float(np.mean(p0_scores)),
+        "raw_candidate_p1_score": float(np.mean(p1_scores)),
+        "raw_seat_gap": float(abs(np.mean(p0_scores) - np.mean(p1_scores))),
+        "paired_score": float(np.mean(pair_scores)),
         "average_final_round": float(np.mean(rounds)),
+        "average_rounds_on_wins": float(np.mean(win_rounds)) if win_rounds else None,
+        "average_rounds_on_losses": float(np.mean(loss_rounds))
+        if loss_rounds
+        else None,
+        "average_rounds_on_ties": float(np.mean(tie_rounds)) if tie_rounds else None,
+        "average_player_turns": float(np.mean(player_turns)),
+        "average_decisions": float(np.mean(decisions)),
     }
 
 
-def actor_vs_bot_score(actor, bot_name, *, games, seed_base, progress=None, label=None):
-    scores, ranks, final_scores, rounds, win_rounds = [], [], [], [], []
+def actor_vs_bot_score(
+    actor,
+    bot_name,
+    *,
+    games,
+    seed_base,
+    progress=None,
+    label=None,
+    include_games=False,
+):
+    scores, ranks, final_scores, rounds = [], [], [], []
+    win_rounds, loss_rounds, tie_rounds = [], [], []
+    player_turns, decisions, game_results = [], [], []
     for index in range(games):
         seat = index % 2
         seed = seed_base + index // 2
@@ -266,6 +333,26 @@ def actor_vs_bot_score(actor, bot_name, *, games, seed_base, progress=None, labe
         rounds.append(game.round_id)
         if score == 1:
             win_rounds.append(game.round_id)
+        elif score == 0:
+            loss_rounds.append(game.round_id)
+        else:
+            tie_rounds.append(game.round_id)
+        player_turns.append(game.turns_completed)
+        decisions.append(game.decision_id)
+        if include_games:
+            game_results.append(
+                {
+                    "game": index,
+                    "paired_seed": seed,
+                    "candidate_seat": seat,
+                    "score": score,
+                    "rank": ranking["rank"],
+                    "final_score": game.players[seat].score,
+                    "final_round": game.round_id,
+                    "player_turn_count": game.turns_completed,
+                    "decision_count": game.decision_id,
+                }
+            )
         if progress:
             progress.update(1, matchup=label or bot_name, seat=f"P{seat}")
     return {
@@ -275,4 +362,18 @@ def actor_vs_bot_score(actor, bot_name, *, games, seed_base, progress=None, labe
         "average_score": float(np.mean(final_scores)),
         "average_final_round": float(np.mean(rounds)),
         "average_rounds_on_wins": float(np.mean(win_rounds)) if win_rounds else None,
+        "average_rounds_on_losses": float(np.mean(loss_rounds))
+        if loss_rounds
+        else None,
+        "average_rounds_on_ties": float(np.mean(tie_rounds)) if tie_rounds else None,
+        "average_player_turns": float(np.mean(player_turns)),
+        "average_decisions": float(np.mean(decisions)),
+        "raw_candidate_p0_score": float(np.mean(scores[0::2])),
+        "raw_candidate_p1_score": float(np.mean(scores[1::2]))
+        if len(scores) > 1
+        else None,
+        "raw_seat_gap": float(abs(np.mean(scores[0::2]) - np.mean(scores[1::2])))
+        if len(scores) > 1
+        else None,
+        "game_results": game_results if include_games else None,
     }

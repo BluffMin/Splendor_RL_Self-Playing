@@ -1,5 +1,7 @@
 # Two-player experiments
 
+Observed for seed 42, checkpoint selected at 802,816 transitions: the initial shared-current policy strongly outperformed Random and Shortest while remaining near parity with Greedy, Noble, and Blocking. v0.5.1 therefore uses the latter three as hard anchors; this observation is not claimed to generalize to every seed.
+
 Recommended progression: 2P smoke → 114,688-transition probe → 300k → 1M → seeds 43 and 44 → final fixed-bot evaluation → opponent pool → 4P expansion.
 
 ```powershell

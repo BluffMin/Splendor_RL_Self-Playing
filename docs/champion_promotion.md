@@ -1,5 +1,7 @@
 # Champion promotion
 
+v0.5.1 requires paired Candidate-vs-Champion success plus hard and saturated anchor gates. By default, hard aggregate regression is limited to 0.02, each hard anchor to 0.05, and each saturated anchor to 0.04.
+
 Each paired seed produces Candidate-P0 and Candidate-P1 games against the same frozen
 Champion. A pair score averages the two 1/0.5/0 results. NumPy bootstrap resampling of
 pair scores gives a deterministic confidence interval.

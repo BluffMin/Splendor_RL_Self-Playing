@@ -18,6 +18,7 @@ def main(argv=None):
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--initial-checkpoint")
+    parser.add_argument("--bootstrap-manifest")
     parser.add_argument("--resume")
     parser.add_argument("--device")
     parser.add_argument("--seed", type=int)
@@ -27,14 +28,23 @@ def main(argv=None):
     )
     parser.add_argument("--progress-refresh-seconds", type=float, default=1.0)
     args = parser.parse_args(argv)
-    if args.initial_checkpoint and args.resume:
-        parser.error("--initial-checkpoint and --resume are mutually exclusive")
+    if (
+        sum(
+            bool(value)
+            for value in (args.initial_checkpoint, args.bootstrap_manifest, args.resume)
+        )
+        > 1
+    ):
+        parser.error(
+            "--initial-checkpoint, --bootstrap-manifest, and --resume are mutually exclusive"
+        )
     config = LeagueConfig.load(args.config)
     config.update({"device": args.device, "seed": args.seed})
     train_league(
         config,
         args.run_dir,
         initial_checkpoint=args.initial_checkpoint,
+        bootstrap_manifest=args.bootstrap_manifest,
         resume=args.resume,
         stop_at_transitions=args.stop_at_transitions,
         progress_config=ProgressConfig(

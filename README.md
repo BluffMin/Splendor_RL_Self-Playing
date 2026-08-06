@@ -1,5 +1,9 @@
 # Splendor Self-Play Environment
 
+## Empirical league bootstrap v0.5.1
+
+Multiple unique shared-PPO checkpoints can now seed a diverse league. Champion promotion treats Greedy, Noble, and Blocking as hard anchors and Random and Shortest as saturated non-regression anchors. See [the bootstrap guide](docs/league_bootstrap.md).
+
 ## Two-player PPO league v0.5.0
 
 The league keeps a continuously trained Candidate, a gated frozen Champion, permanent

@@ -362,7 +362,7 @@ def train(
     progress.status("Finalizing")
     save_at(transitions)
     summary = {
-        "rl_version": "0.5.0",
+        "rl_version": "0.5.1",
         "engine_version": "0.3.2",
         "num_players": config.num_players,
         "training_mode": "shared_current",

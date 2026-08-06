@@ -241,6 +241,7 @@ class LeagueRolloutCollector(RolloutCollector):
                     score, self.config.pfsp_alpha, self.config.pfsp_epsilon
                 ),
                 "pfsp_probability": float(probability),
+                "opponent_source_type": self.pool.metadata[opponent_id].source_type,
                 "last_played_transition": self.records.get(
                     opponent_id
                 ).last_played_transition,

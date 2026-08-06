@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.1 - Empirical league bootstrap and robust Champion selection
+
+- Added tournament-based bootstrap Champion selection and a diverse initial population.
+- Added hard/saturated anchor groups, robust promotion gates, paired evaluation, and real round metrics.
+- Preserved self-play-only PPO training by default.
+
 ## v0.5.0 - Two-player PPO league self-play
 
 - Separated Candidate and Champion policies.

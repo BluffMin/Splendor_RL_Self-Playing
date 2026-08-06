@@ -95,7 +95,7 @@ class OpponentPool:
         temporary.write_text(
             json.dumps(
                 {
-                    "schema_version": "0.5.0",
+                    "schema_version": "0.5.1",
                     "opponents": [asdict(item) for item in self.metadata.values()],
                 },
                 indent=2,
@@ -121,13 +121,19 @@ class OpponentPool:
     ):
         if opponent_id in self.metadata:
             raise ValueError(f"duplicate opponent ID: {opponent_id}")
-        folder = "hall_of_fame" if source_type == "champion" else "recent"
+        folder = (
+            "hall_of_fame"
+            if source_type == "champion"
+            else "bootstrap"
+            if source_type == "bootstrap_historical"
+            else "recent"
+        )
         relative = Path(folder) / f"{opponent_id}_actor.pt"
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         checksum = actor_sha256(actor)
         payload = {
-            "schema_version": "0.5.0",
+            "schema_version": "0.5.1",
             "actor_state_dict": actor.state_dict(),
             "actor_config": {"hidden_sizes": self.hidden_sizes},
             "actor_obs_size": actor_obs_size,
@@ -185,7 +191,7 @@ class OpponentPool:
         if not path.exists():
             raise FileNotFoundError(f"opponent snapshot is missing: {path}")
         payload = torch.load(path, map_location=self.device, weights_only=False)
-        if payload.get("schema_version") != "0.5.0":
+        if payload.get("schema_version") not in {"0.5.0", "0.5.1"}:
             raise ValueError("unsupported opponent snapshot schema")
         checksum = actor_sha256(payload["actor_state_dict"])
         if checksum != metadata.sha256 or checksum != payload.get("sha256"):
@@ -213,6 +219,14 @@ class OpponentPool:
     def historical_ids(self, current_champion_id=None):
         return [
             key
-            for key in [*self.hall_of_fame_ids, *self.recent_ids]
+            for key in [*self.hall_of_fame_ids, *self.bootstrap_ids, *self.recent_ids]
             if key != current_champion_id
+        ]
+
+    @property
+    def bootstrap_ids(self):
+        return [
+            key
+            for key, item in self.metadata.items()
+            if item.source_type == "bootstrap_historical"
         ]

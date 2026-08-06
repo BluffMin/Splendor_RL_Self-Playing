@@ -1,5 +1,7 @@
 # PPO-based league self-play
 
+An empirical bootstrap manifest may initialize the Candidate, `champion_0000`, and a diverse historical pool. Fixed bots remain evaluation anchors and do not generate PPO trajectories when `scripted_training_fraction` is its default `0.0`.
+
 `league_2p` supports exactly two players. The Candidate owns the trainable actor,
 privileged critic, optimizer, and full schedule. The Champion is the latest actor-only
 snapshot that passed promotion. Candidate training may fluctuate; Champion changes

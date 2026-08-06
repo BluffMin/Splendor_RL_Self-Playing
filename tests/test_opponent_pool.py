@@ -30,7 +30,7 @@ def test_pool_archive_cap_atomic_index_and_validation(tmp_path):
         "recent_2"
     ]
     assert (
-        json.loads((tmp_path / "index.json").read_text())["schema_version"] == "0.5.0"
+        json.loads((tmp_path / "index.json").read_text())["schema_version"] == "0.5.1"
     )
     with pytest.raises(ValueError, match="duplicate"):
         add(pool, actor, "champion_0000", "champion")
