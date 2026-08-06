@@ -1,9 +1,12 @@
 import json
 
+import torch
 from league_helpers import tiny_config
 
+from splendor_rl.checkpoint import save_checkpoint
 from splendor_rl.league.state import atomic_json_write, load_league_state
-from splendor_rl.league.train import train_league
+from splendor_rl.league.train import _adopt_checkpoint_architecture, train_league
+from splendor_rl.models import PrivilegedCritic, SharedActor
 from splendor_rl.progress import ProgressConfig, ProgressMode
 
 
@@ -39,3 +42,18 @@ def test_candidate_and_league_state_resume_without_duplicate_threshold(tmp_path)
         .splitlines()
     ]
     assert rows[-1]["learning_rate"] == 0.00015
+
+
+def test_initial_checkpoint_architecture_overrides_smoke_network(tmp_path):
+    config = tiny_config(hidden_sizes=[8])
+    actor = SharedActor(475, 373, [16, 16])
+    critic = PrivilegedCritic(475, [16, 16])
+    optimizer = torch.optim.Adam([*actor.parameters(), *critic.parameters()])
+    checkpoint = tmp_path / "initial.pt"
+    source_config = tiny_config(hidden_sizes=[16, 16])
+    sizes = {"actor": 475, "critic": 475, "action": 373}
+    save_checkpoint(checkpoint, actor, critic, optimizer, source_config, 100, 2, sizes)
+    data = _adopt_checkpoint_architecture(config, checkpoint, sizes)
+    restored = SharedActor(475, 373, config.hidden_sizes)
+    restored.load_state_dict(data["actor_state_dict"])
+    assert config.hidden_sizes == [16, 16]

@@ -111,6 +111,24 @@ def _update_current_champion(run, pool, opponent_id):
     atomic_json_write(champion_dir / "current_metadata.json", metadata.to_dict())
 
 
+def _adopt_checkpoint_architecture(config, checkpoint_path, expected_sizes):
+    data = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    sizes = data.get("observation_sizes")
+    if sizes != expected_sizes:
+        raise ValueError(
+            f"initial checkpoint observation/action sizes {sizes} do not match {expected_sizes}"
+        )
+    if data.get("num_players", data.get("config", {}).get("num_players")) != 2:
+        raise ValueError(
+            "league_2p initial checkpoint must contain a two-player policy"
+        )
+    hidden_sizes = data.get("config", {}).get("hidden_sizes")
+    if not hidden_sizes:
+        raise ValueError("checkpoint does not contain actor hidden_sizes metadata")
+    config.hidden_sizes = list(hidden_sizes)
+    return data
+
+
 def train_league(
     config: LeagueConfig,
     run_dir,
@@ -141,6 +159,11 @@ def train_league(
         "critic": SelfPlayWrapper.critic_state_size,
         "action": SelfPlayWrapper.action_size,
     }
+    architecture_data = None
+    if resume or initial_checkpoint:
+        architecture_data = _adopt_checkpoint_architecture(
+            config, resume or initial_checkpoint, sizes
+        )
     actor = SharedActor(sizes["actor"], sizes["action"], config.hidden_sizes).to(device)
     critic = PrivilegedCritic(sizes["critic"], config.hidden_sizes).to(device)
     optimizer = torch.optim.Adam(
@@ -172,10 +195,9 @@ def train_league(
                 "candidate checkpoint and league_state.json are inconsistent"
             )
     elif initial_checkpoint:
-        data = torch.load(initial_checkpoint, map_location=device, weights_only=False)
-        actor.load_state_dict(data["actor_state_dict"])
-        if "critic_state_dict" in data:
-            critic.load_state_dict(data["critic_state_dict"])
+        actor.load_state_dict(architecture_data["actor_state_dict"])
+        if "critic_state_dict" in architecture_data:
+            critic.load_state_dict(architecture_data["critic_state_dict"])
     if stop_at_transitions is not None:
         if stop_at_transitions > config.total_transitions:
             raise ValueError("stop_at_transitions must not exceed total_transitions")
