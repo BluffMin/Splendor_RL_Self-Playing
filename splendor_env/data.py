@@ -10,23 +10,58 @@ import csv
 import io
 from dataclasses import dataclass
 
-from .actions import COLORS
+from .actions import GEM_COLORS
 
 
 @dataclass(frozen=True, slots=True)
 class Card:
-    card_id: int
+    card_id: str
     tier: int  # 0, 1, 2
     points: int
-    bonus: int  # color index 0..4
+    bonus_color: str
     cost: tuple[int, int, int, int, int]
+
+    @property
+    def bonus(self) -> int:
+        """Backward-compatible numeric bonus index."""
+        return GEM_COLORS.index(self.bonus_color)
+
+    def cost_by_color(self) -> dict[str, int]:
+        return dict(zip(GEM_COLORS, self.cost, strict=True))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "card_id": self.card_id,
+            "tier": self.tier + 1,
+            "bonus_color": self.bonus_color,
+            "points": self.points,
+            "cost": self.cost_by_color(),
+        }
+
+    def short_text(self) -> str:
+        costs = ", ".join(f"{c}={n}" for c, n in self.cost_by_color().items() if n)
+        return f"{self.card_id}: {self.bonus_color} bonus, {self.points} pt, cost {costs or 'free'}"
 
 
 @dataclass(frozen=True, slots=True)
 class Noble:
-    noble_id: int
-    cost: tuple[int, int, int, int, int]
+    noble_id: str
+    requirements: tuple[int, int, int, int, int]
     points: int = 3
+
+    @property
+    def cost(self) -> tuple[int, int, int, int, int]:
+        return self.requirements
+
+    def requirements_by_color(self) -> dict[str, int]:
+        return dict(zip(GEM_COLORS, self.requirements, strict=True))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "noble_id": self.noble_id,
+            "points": self.points,
+            "requirements": self.requirements_by_color(),
+        }
 
 
 _CARD_CSV = """tier,value,type,green,white,blue,black,red
@@ -138,31 +173,46 @@ _NOBLE_CSV = """green,white,blue,black,red
 
 def load_cards() -> tuple[Card, ...]:
     cards: list[Card] = []
-    for card_id, row in enumerate(csv.DictReader(io.StringIO(_CARD_CSV))):
+    counters: dict[tuple[int, str], int] = {}
+    type_colors = ("green", "white", "blue", "black", "red")
+    for row in csv.DictReader(io.StringIO(_CARD_CSV)):
+        tier = int(row["tier"])
+        bonus_color = type_colors[int(row["type"]) - 1]
+        key = (tier, bonus_color)
+        counters[key] = counters.get(key, 0) + 1
         cards.append(
             Card(
-                card_id=card_id,
-                tier=int(row["tier"]) - 1,
+                card_id=f"T{tier}-{bonus_color.upper()}-{counters[key]:02d}",
+                tier=tier - 1,
                 points=int(row["value"]),
-                bonus=int(row["type"]) - 1,
-                cost=tuple(int(row[color]) for color in COLORS),
+                bonus_color=bonus_color,
+                cost=tuple(int(row[color]) for color in GEM_COLORS),
             )
         )
     assert len(cards) == 90
     assert [sum(card.tier == tier for card in cards) for tier in range(3)] == [40, 30, 20]
+    assert len({card.card_id for card in cards}) == 90
+    for tier, expected in enumerate((8, 6, 4)):
+        assert all(
+            sum(card.tier == tier and card.bonus_color == color for card in cards) == expected
+            for color in GEM_COLORS
+        )
     return tuple(cards)
 
 
 def load_nobles() -> tuple[Noble, ...]:
     nobles: list[Noble] = []
-    for noble_id, row in enumerate(csv.DictReader(io.StringIO(_NOBLE_CSV))):
+    for noble_index, row in enumerate(csv.DictReader(io.StringIO(_NOBLE_CSV)), 1):
         nobles.append(
             Noble(
-                noble_id=noble_id,
-                cost=tuple(int(row[color]) for color in COLORS),
+                noble_id=f"N-{noble_index:02d}",
+                requirements=tuple(int(row[color]) for color in GEM_COLORS),
             )
         )
     assert len(nobles) == 10
+    assert len({noble.noble_id for noble in nobles}) == 10
+    assert len({noble.requirements for noble in nobles}) == 10
+    assert all(noble.points == 3 for noble in nobles)
     return tuple(nobles)
 
 

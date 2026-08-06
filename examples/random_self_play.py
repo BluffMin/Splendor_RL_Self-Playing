@@ -11,7 +11,6 @@ def main() -> None:
         num_players=2,
         reward_mode="sparse",
         max_turns=200,
-        allow_deadlock_pass=True,
         render_mode="ansi",
     )
     game.reset(seed=42)

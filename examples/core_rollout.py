@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import numpy as np
-
 from splendor_env import SplendorGame, describe_action
+from splendor_env.agents import GreedyAgent
 
 
 def main() -> None:
-    rng = np.random.default_rng(0)
     game = SplendorGame(num_players=2, seed=123)
+    agent = GreedyAgent()
 
     while not game.done:
-        legal = game.legal_actions()
-        action = int(rng.choice(legal))
+        action = agent.act(game)
         result = game.step(action)
         if result.turn_ended:
             print(

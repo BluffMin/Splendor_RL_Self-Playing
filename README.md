@@ -20,7 +20,9 @@
 - 동점 시 구매한 개발 카드가 더 적은 플레이어 우선
 - 부분 관측: 공개 시장 예약 카드는 모두에게 공개하고, 덱 예약 카드는 상대에게 티어만 공개
 - 중앙집중식 critic용 `state()` 제공
-- 고정 `Discrete(324)` 행동 공간과 `action_mask`
+- 고정 `Discrete(373)` 행동 공간과 phase별 `action_mask`
+- 자유 골드 결제, 조합 단위 토큰 반환, 복수 귀족 선택
+- JSON/CSV 경기 기록, 최종 패 요약, 관점별 replay와 SHA-256 재현 검증
 - sparse terminal reward 또는 zero-sum score shaping
 - ANSI/human 텍스트 렌더링
 
@@ -44,6 +46,32 @@ pytest
 python examples/random_self_play.py
 python examples/reservation_visibility_demo.py
 ```
+
+## v0.3 경기 기록과 리플레이
+
+```bash
+python examples/generate_demo_games.py \
+    --players 4 \
+    --games 5 \
+    --seed 100 \
+    --output-dir runs/demo_games \
+    --record-level full
+```
+
+최종 패는 `runs/demo_games/game_0000_final_summary.txt`, 여러 경기 표는 `games_summary.csv`에서 확인합니다.
+
+```bash
+# 상태 hash와 최종 보유 상태 재현 검증
+python -m splendor_env.replay runs/demo_games/game_0000.json --verify
+
+# 전체 공개 턴 단위 자동 재생
+python -m splendor_env.replay runs/demo_games/game_0000.json --omniscient --turn-only --delay 0.4
+
+# P2 관점 수동 재생
+python -m splendor_env.replay runs/demo_games/game_0000.json --perspective 2 --step
+```
+
+`summary`, `actions`, `full` 기록 레벨을 지원합니다. `full`은 decision event와 실제 턴 종료 snapshot을 함께 저장합니다. recorder는 passive listener이므로 observation, reward, action mask를 바꾸지 않습니다.
 
 직접 코드에서 사용할 때:
 
@@ -80,12 +108,12 @@ PettingZoo의 AEC 루프에서는 보상이 해당 에이전트의 **다음 `las
 
 - `normal`: 일반 행동
 - `payment`: 구매 시 색 토큰과 골드의 지불 조합 선택
-- `discard`: 토큰 하나씩 반납
+- `discard`: 정확히 초과한 수량의 토큰 반환 조합 선택
 - `noble`: 만족한 귀족 중 하나 선택
 
 이 때문에 동시 행동용 Parallel API가 아니라 턴 순서를 정확히 표현하는 AEC API를 사용합니다.
 
-## 행동 공간: 324개
+## 행동 공간: 373개
 
 | 범위 | 행동 |
 |---:|---|
@@ -95,12 +123,11 @@ PettingZoo의 AEC 루프에서는 보상이 해당 에이전트의 **다음 `las
 | 42–53 | 공개 카드 예약 |
 | 54–56 | 티어 덱에서 비공개 예약 |
 | 57–59 | 내 예약 카드 구매 |
-| 60–65 | 토큰 하나 반납 |
-| 66–70 | 귀족 선택 |
-| 71 | 공식 행동이 하나도 없을 때만 가능한 deadlock pass |
-| 72–323 | 카드 구매 시 골드 대체 지불 조합 선택 |
+| 60–311 | 결정적으로 정렬된 결제 plan index (최대 252) |
+| 312–367 | 결정적으로 정렬된 반환 plan index (최대 56) |
+| 368–372 | 귀족 선택 |
 
-정책은 324개 로짓을 출력하고, `action_mask == 0`인 로짓을 매우 작은 값으로 바꾼 뒤 categorical sampling 또는 argmax를 수행하면 됩니다.
+공식 pass 행동은 없습니다. 정상 상태에서 합법 행동이 0개면 `NoLegalActionError`가 발생합니다. 정책은 373개 로짓을 출력합니다.
 
 ```python
 masked_logits = logits.masked_fill(action_mask == 0, -1e9)
@@ -110,14 +137,15 @@ masked_logits = logits.masked_fill(action_mask == 0, -1e9)
 
 ```python
 Dict({
-    "observation": Box(0, 1, shape=(454,), dtype=float32),
-    "action_mask": MultiBinary(324),
+    "observation": Box(0, 1, shape=(475,), dtype=float32),
+    "action_mask": MultiBinary(373),
 })
 ```
 
-454차원 벡터는 194차원 전역 보드 블록과 최대 4명의 65차원 플레이어 블록으로 구성됩니다.
+475차원 벡터는 215차원 전역 보드 블록과 최대 4명의 65차원 플레이어 블록으로 구성됩니다. `OBS_LAYOUT`에 주요 slice가 정의되어 있습니다.
 
-- 현재 phase, 종료 여부, final round 여부, 진행률
+- 5-way phase, 종료 여부, final round 여부, round 진행률
+- pending purchase의 공개 가능한 카드 정보, 결제 plan 수, 반환 초과량
 - 은행 토큰과 티어별 남은 덱 크기
 - 공개 카드 12장
 - 귀족 최대 5개
@@ -126,7 +154,11 @@ Dict({
 - 공개 시장에서 예약한 카드는 모든 플레이어에게 전체 정보 공개
 - 덱에서 예약한 카드는 소유자에게 전체 정보, 상대에게 존재·비공개 출처·티어만 공개
 
-`game.unwrapped.state()`는 모든 비공개 예약의 payload까지 포함하는 454차원 omniscient state를 반환합니다.
+`game.unwrapped.state()`는 모든 비공개 예약의 payload까지 포함하는 475차원 omniscient state를 반환합니다.
+
+## 공식 종료와 안전 truncation
+
+`SplendorGame(..., seed=...)`에는 공식 15점/라운드 종료만 존재합니다. 공식 pass와 max-turn 종료는 없습니다. PettingZoo `env(max_turns=None)`가 공식 모드이며, 숫자를 지정한 경우에만 어댑터가 `max_turns_truncation`으로 episode를 안전 종료합니다.
 
 텍스트 렌더링도 같은 공개 규칙을 따릅니다. PettingZoo 환경에서 전체 카드를 확인하는 디버그 렌더링이 필요하면 `render_omniscient=True`를 지정합니다.
 
@@ -164,8 +196,12 @@ prestige를 얻을 때 행동한 플레이어에게 `shaping_scale × 획득 점
 
 - `splendor_env/core.py`: 외부 RL 라이브러리와 독립적인 규칙 엔진
 - `splendor_env/pettingzoo_env.py`: PettingZoo AEC 어댑터
-- `splendor_env/actions.py`: 324개 행동 정의 및 설명
+- `splendor_env/actions.py`: 373개 phase별 행동 정의 및 설명
 - `splendor_env/data.py`: 90장 카드와 10개 귀족 수치
+- `splendor_env/recording.py`: JSON/CSV 기록과 최종 결과 저장
+- `splendor_env/replay.py`: 관점별 replay와 action 재실행 검증 CLI
+- `splendor_env/agents/`: random/greedy 검증 에이전트
+- `examples/generate_demo_games.py`: 여러 경기 기록 생성
 - `examples/random_self_play.py`: 합법 행동 마스크를 이용한 실행 예제
 - `examples/reservation_visibility_demo.py`: 관점별 예약 카드 공개 범위 예제
 - `tests/test_core.py`: 보존 법칙 및 랜덤 롤아웃 테스트

@@ -25,7 +25,7 @@ class raw_env(AECEnv):
 
     metadata: ClassVar[dict[str, Any]] = {
         "render_modes": ["human", "ansi"],
-        "name": "splendor_selfplay_v0",
+        "name": "splendor_selfplay_v3",
         "is_parallelizable": False,
         "render_fps": 2,
     }
@@ -37,7 +37,6 @@ class raw_env(AECEnv):
         reward_mode: RewardMode = "sparse",
         shaping_scale: float = 0.1,
         max_turns: int | None = None,
-        allow_deadlock_pass: bool = False,
         render_mode: str | None = None,
         render_omniscient: bool = False,
     ) -> None:
@@ -52,11 +51,10 @@ class raw_env(AECEnv):
         self.shaping_scale = float(shaping_scale)
         self.render_mode = render_mode
         self.render_omniscient = bool(render_omniscient)
-        self.game = SplendorGame(
-            num_players=num_players,
-            max_turns=max_turns,
-            allow_deadlock_pass=allow_deadlock_pass,
-        )
+        if max_turns is not None and max_turns <= 0:
+            raise ValueError("max_turns must be positive or None")
+        self.max_turns = max_turns
+        self.game = SplendorGame(num_players=num_players)
 
         self.possible_agents = [f"player_{i}" for i in range(num_players)]
         self.agent_name_mapping = {
@@ -97,6 +95,7 @@ class raw_env(AECEnv):
         del options
         self.game.reset(seed=seed)
         self._last_turn_ended = False
+        self._last_automatic_resolution = ()
         self.agents = self.possible_agents[:]
         self.agent_selection = self.possible_agents[self.game.current_player]
         self.rewards = {agent: 0.0 for agent in self.agents}
@@ -149,6 +148,14 @@ class raw_env(AECEnv):
         self.rewards = {name: 0.0 for name in self.agents}
         result = self.game.step(int(action))
         self._last_turn_ended = result.turn_ended
+        self._last_automatic_resolution = result.automatic_resolution
+        if (
+            self.max_turns is not None
+            and result.turn_ended
+            and self.game.turns_completed >= self.max_turns
+            and not self.game.done
+        ):
+            self.game.truncate("max_turns_truncation")
 
         if self.reward_mode == "score" and result.score_delta:
             shaped = self.shaping_scale * float(result.score_delta)
@@ -180,14 +187,22 @@ class raw_env(AECEnv):
 
     def _info_for(self, agent: str) -> dict[str, Any]:
         info: dict[str, Any] = {
-            "phase": self.game.phase,
+            "phase": self.game.phase.value,
+            "decision_id": self.game.decision_id,
+            "turn_id": self.game.turns_completed,
+            "round_id": self.game.round_id,
+            "acting_player": self.game.current_player,
+            "automatic_resolution": list(
+                getattr(self, "_last_automatic_resolution", ())
+            ),
             "turns_completed": self.game.turns_completed,
             "current_player": self.game.current_player,
-            "turn_ended": getattr(self, "_last_turn_ended", False),
+            "turn_completed": getattr(self, "_last_turn_ended", False),
         }
         if self.game.last_action is not None:
             info["last_action"] = self.game.last_action
             info["last_action_text"] = describe_action(self.game.last_action)
+            info["action_text"] = describe_action(self.game.last_action)
             info["last_actor"] = self.game.last_actor
         if self.game.done:
             info.update(

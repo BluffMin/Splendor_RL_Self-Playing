@@ -1,17 +1,25 @@
-"""Fixed discrete action vocabulary for Splendor.
-
-The action space is deliberately flat so that DQN/PPO-style policies can use a
-single categorical head together with an invalid-action mask.
-"""
+"""Stable fixed action layout for every Splendor decision phase."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import combinations, product
+from itertools import combinations
 from typing import Any
 
-COLORS = ("green", "white", "blue", "black", "red")
-TOKEN_COLORS = COLORS + ("gold",)
+GEM_COLORS = ("white", "blue", "green", "red", "black")
+COLORS = GEM_COLORS  # Backward-compatible alias.
+TOKEN_COLORS = GEM_COLORS + ("gold",)
+
+NORMAL_OFFSET = 0
+NORMAL_SIZE = 60
+PAYMENT_OFFSET = 60
+PAYMENT_SIZE = 252  # C(5 gold + 5 colors, 5 colors)
+DISCARD_OFFSET = PAYMENT_OFFSET + PAYMENT_SIZE
+DISCARD_SIZE = 56  # C(3 returned + 6 token types - 1, 6 - 1)
+NOBLE_OFFSET = DISCARD_OFFSET + DISCARD_SIZE
+NOBLE_SIZE = 5
+N_ACTIONS = NOBLE_OFFSET + NOBLE_SIZE
+assert N_ACTIONS == 373
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,60 +28,28 @@ class ActionSpec:
     payload: Any
 
 
-ACTIONS: list[ActionSpec] = []
-
-# Take 1-3 distinct non-gold colors. Only the largest legal subset size is
-# enabled by the mask (normally 3; 1 or 2 only when fewer stacks are nonempty).
+NORMAL_ACTIONS: list[ActionSpec] = []
 for size in (1, 2, 3):
     for combo in combinations(range(5), size):
-        ACTIONS.append(ActionSpec("take_distinct", combo))
-
-# Take two of one color.
+        NORMAL_ACTIONS.append(ActionSpec("take_distinct", combo))
 for color in range(5):
-    ACTIONS.append(ActionSpec("take_double", color))
-
-# Buy one of 12 visible cards (tier-major, four slots per tier).
+    NORMAL_ACTIONS.append(ActionSpec("take_double", color))
 for slot in range(12):
-    ACTIONS.append(ActionSpec("buy_visible", slot))
-
-# Reserve one of 12 visible cards.
+    NORMAL_ACTIONS.append(ActionSpec("buy_visible", slot))
 for slot in range(12):
-    ACTIONS.append(ActionSpec("reserve_visible", slot))
-
-# Blind-reserve from the top of a tier deck.
+    NORMAL_ACTIONS.append(ActionSpec("reserve_visible", slot))
 for tier in range(3):
-    ACTIONS.append(ActionSpec("reserve_deck", tier))
-
-# Buy one of the current player's three reserved slots.
+    NORMAL_ACTIONS.append(ActionSpec("reserve_deck", tier))
 for slot in range(3):
-    ACTIONS.append(ActionSpec("buy_reserved", slot))
+    NORMAL_ACTIONS.append(ActionSpec("buy_reserved", slot))
+assert len(NORMAL_ACTIONS) == NORMAL_SIZE
 
-# During the forced discard phase, return one token at a time.
-for color in range(6):
-    ACTIONS.append(ActionSpec("discard_one", color))
-
-# If multiple nobles are eligible, choose one of up to five visible nobles.
-for slot in range(5):
-    ACTIONS.append(ActionSpec("choose_noble", slot))
-
-# Safeguard for pathological deadlocks. This is enabled only when no official
-# action is legal. A full table rotation of passes truncates the episode.
-ACTIONS.append(ActionSpec("pass", None))
-
-# During a purchase, choose how many gold tokens replace each required color.
-# A player can hold at most five gold tokens, so allocations with total <= 5
-# cover every legal payment without making the action vocabulary unbounded.
-PAYMENT_OFFSET = len(ACTIONS)
-PAYMENT_ALLOCATIONS = tuple(
-    allocation
-    for allocation in product(range(6), repeat=5)
-    if sum(allocation) <= 5
+ACTIONS = (
+    NORMAL_ACTIONS
+    + [ActionSpec("choose_payment", i) for i in range(PAYMENT_SIZE)]
+    + [ActionSpec("choose_discard", i) for i in range(DISCARD_SIZE)]
+    + [ActionSpec("choose_noble", i) for i in range(NOBLE_SIZE)]
 )
-for allocation in PAYMENT_ALLOCATIONS:
-    ACTIONS.append(ActionSpec("choose_payment", allocation))
-
-N_ACTIONS = len(ACTIONS)
-assert N_ACTIONS == 324
 
 OFFSETS = {
     "take_distinct": 0,
@@ -82,32 +58,35 @@ OFFSETS = {
     "reserve_visible": 42,
     "reserve_deck": 54,
     "buy_reserved": 57,
-    "discard_one": 60,
-    "choose_noble": 66,
-    "pass": 71,
     "choose_payment": PAYMENT_OFFSET,
+    "choose_discard": DISCARD_OFFSET,
+    "choose_noble": NOBLE_OFFSET,
 }
 
 
 def action_id(kind: str, payload: Any) -> int:
-    """Return the integer id for a known action specification."""
+    """Return a stable action ID; phase plans use their deterministic index."""
+    if kind in {"choose_payment", "choose_discard", "choose_noble"}:
+        action = OFFSETS[kind] + int(payload)
+        if not 0 <= action < N_ACTIONS:
+            raise KeyError(f"Unknown action: {kind} {payload}")
+        return action
     target = ActionSpec(kind, payload)
     try:
-        return ACTIONS.index(target)
+        return NORMAL_ACTIONS.index(target)
     except ValueError as exc:
         raise KeyError(f"Unknown action: {target}") from exc
 
 
 def describe_action(action: int) -> str:
-    """Human-readable action description useful for debugging rollouts."""
+    """Return a deterministic human-readable action description."""
     if not 0 <= int(action) < N_ACTIONS:
         return f"invalid_action({action})"
     spec = ACTIONS[int(action)]
     if spec.kind == "take_distinct":
-        names = ", ".join(COLORS[i] for i in spec.payload)
-        return f"take distinct: {names}"
+        return "take distinct: " + ", ".join(GEM_COLORS[i] for i in spec.payload)
     if spec.kind == "take_double":
-        return f"take two: {COLORS[spec.payload]}"
+        return f"take two: {GEM_COLORS[spec.payload]}"
     if spec.kind in {"buy_visible", "reserve_visible"}:
         tier, slot = divmod(spec.payload, 4)
         verb = "buy" if spec.kind == "buy_visible" else "reserve"
@@ -116,17 +95,8 @@ def describe_action(action: int) -> str:
         return f"blind reserve: tier {spec.payload + 1}"
     if spec.kind == "buy_reserved":
         return f"buy reserved: slot {spec.payload}"
-    if spec.kind == "discard_one":
-        return f"discard one: {TOKEN_COLORS[spec.payload]}"
-    if spec.kind == "choose_noble":
-        return f"choose noble: slot {spec.payload}"
-    if spec.kind == "pass":
-        return "pass (deadlock safeguard)"
     if spec.kind == "choose_payment":
-        parts = ", ".join(
-            f"{COLORS[i]}={amount}"
-            for i, amount in enumerate(spec.payload)
-            if amount
-        )
-        return f"pay with gold: {parts or 'none'}"
-    return repr(spec)
+        return f"choose payment plan {spec.payload}"
+    if spec.kind == "choose_discard":
+        return f"choose discard plan {spec.payload}"
+    return f"choose noble: slot {spec.payload}"
