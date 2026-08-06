@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..core import NoLegalActionError, SplendorGame
+from ..event_schema import build_turn_records, summarize_turn
 from ..replay import load_recording
 from .view_model import (
     Perspective,
@@ -27,7 +28,11 @@ def _legal_actions_or_empty(game: SplendorGame) -> list[int]:
 
 
 def _asset_text(name: str) -> str:
-    return files("splendor_env.visualization.assets").joinpath(name).read_text(encoding="utf-8")
+    return (
+        files("splendor_env.visualization.assets")
+        .joinpath(name)
+        .read_text(encoding="utf-8")
+    )
 
 
 def _safe_json(value: Any) -> str:
@@ -87,7 +92,13 @@ def export_replay(
         game, data_mode=data_mode, perspective=perspective
     )
     frames: list[dict[str, Any]] = [
-        {"views": initial_views, "event": None, "delta": {}, "turn_completed": False, "legal_actions": _legal_actions_or_empty(game)}
+        {
+            "views": initial_views,
+            "event": None,
+            "delta": {},
+            "turn_completed": False,
+            "legal_actions": _legal_actions_or_empty(game),
+        }
     ]
     for event in document["events"]:
         pre = game.to_state_dict()
@@ -104,9 +115,15 @@ def export_replay(
             for key in (
                 "decision_id",
                 "turn_id",
+                "player_turn_id",
+                "subdecision_index",
                 "round_id",
                 "phase",
+                "phase_before",
+                "phase_after",
                 "player",
+                "acting_player",
+                "next_player",
                 "action_type",
                 "action_text",
                 "action_params",
@@ -122,12 +139,49 @@ def export_replay(
                 "legal_actions": legal_actions,
             }
         )
+    records = build_turn_records(document["events"])
+    turn_frames = []
+    for record in records:
+        matching = next(
+            (
+                f
+                for f in reversed(frames)
+                if f.get("event")
+                and f["event"].get("player_turn_id", f["event"].get("turn_id"))
+                == record.player_turn_id
+            ),
+            None,
+        )
+        if matching:
+            turn_delta = (
+                compute_state_delta(record.pre_snapshot, record.post_snapshot).to_dict()
+                if record.pre_snapshot and record.post_snapshot
+                else matching["delta"]
+            )
+            turn_data = record.to_dict()
+            summary = summarize_turn(record)
+            if data_mode == "perspective-sanitized-data":
+                turn_delta["reserved_card_ids"] = []
+                turn_data["pre_snapshot"] = None
+                turn_data["post_snapshot"] = None
+                if record.reserved_card and record.reserved_card.get("origin") == "deck" and record.acting_player != perspective:
+                    turn_data["reserved_card"] = {"origin": "deck", "card_id": None}
+                    summary = f"Turn {record.player_turn_id + 1} · Round {record.round_id + 1} · P{record.acting_player}\nAction: P{record.acting_player} blind reserved a Tier card\nNext player: P{record.next_player}"
+            turn_frames.append(
+                {
+                    **matching,
+                    "delta": turn_delta,
+                    "turn": turn_data,
+                    "summary": summary,
+                }
+            )
     payload = {
         "schema": "splendor-visual-replay-1",
         "dataMode": data_mode,
         "defaultPerspective": str(perspective),
         "perspectives": perspectives,
         "frames": frames,
+        "turnFrames": turn_frames,
     }
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +197,9 @@ def export_game_view(
     """Export one current live state as a self-contained HTML viewer."""
     views, perspectives = _views_for_game(
         game,
-        data_mode="perspective-sanitized-data" if perspective != "omniscient" else "omniscient-data",
+        data_mode="perspective-sanitized-data"
+        if perspective != "omniscient"
+        else "omniscient-data",
         perspective=perspective,
     )
     payload = {
@@ -151,7 +207,15 @@ def export_game_view(
         "dataMode": "snapshot",
         "defaultPerspective": str(perspective),
         "perspectives": perspectives,
-        "frames": [{"views": views, "event": None, "delta": {}, "turn_completed": False, "legal_actions": [] if game.done else _legal_actions_or_empty(game)}],
+        "frames": [
+            {
+                "views": views,
+                "event": None,
+                "delta": {},
+                "turn_completed": False,
+                "legal_actions": [] if game.done else _legal_actions_or_empty(game),
+            }
+        ],
     }
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -163,12 +227,20 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("recording")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--data-mode", choices=("omniscient-data", "perspective-sanitized-data"), default="omniscient-data")
+    parser.add_argument(
+        "--data-mode",
+        choices=("omniscient-data", "perspective-sanitized-data"),
+        default="omniscient-data",
+    )
     parser.add_argument("--perspective", default="current")
     parser.add_argument("--single-file", action="store_true", default=True)
     args = parser.parse_args()
-    perspective: Perspective = int(args.perspective) if args.perspective.isdigit() else args.perspective
-    output = export_replay(args.recording, args.output, data_mode=args.data_mode, perspective=perspective)
+    perspective: Perspective = (
+        int(args.perspective) if args.perspective.isdigit() else args.perspective
+    )
+    output = export_replay(
+        args.recording, args.output, data_mode=args.data_mode, perspective=perspective
+    )
     print(f"exported {output} ({output.stat().st_size} bytes)")
 
 

@@ -15,7 +15,9 @@ def main() -> None:
     parser.add_argument("--games", type=int, default=5)
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--output-dir", default="runs/demo_games")
-    parser.add_argument("--record-level", choices=("summary", "actions", "full"), default="full")
+    parser.add_argument(
+        "--record-level", choices=("summary", "actions", "full"), default="full"
+    )
     parser.add_argument("--agents", nargs="*", choices=("greedy", "random"))
     args = parser.parse_args()
     output = Path(args.output_dir)
@@ -42,7 +44,9 @@ def main() -> None:
         recorder.attach(game)
         while not game.done:
             if game.decision_id >= 20_000:
-                raise RuntimeError("demo exceeded 20,000 decisions without official end")
+                raise RuntimeError(
+                    "demo exceeded 20,000 decisions without official end"
+                )
             game.step(agents[game.current_player].act(game))
         document = recorder.finalize()
         (output / f"game_{game_index:04d}_final_summary.txt").write_text(

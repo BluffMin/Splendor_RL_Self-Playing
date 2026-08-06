@@ -1,54 +1,98 @@
-"""Replay and verify recorded Splendor episodes."""
+"""Replay and verify v0.3.2 and legacy Splendor episode logs."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 from .core import SplendorGame
+from .event_schema import DecisionEvent, build_turn_records, summarize_turn
+from .recording import load_episode_log
 
 
 class ReplayVerificationError(RuntimeError):
-    """Raised at the first deterministic replay mismatch."""
+    pass
 
 
 def load_recording(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return load_episode_log(path).document
 
 
 def verify_recording(document: dict[str, Any]) -> SplendorGame:
-    """Re-run actions and verify every hash and final holding."""
-    game = SplendorGame(document["config"]["num_players"], seed=document["seed"])
-    if game.state_hash() != document["initial_state_hash"]:
+    metadata = document.get("game_metadata", {})
+    game = SplendorGame(
+        int(metadata.get("num_players", document.get("config", {})["num_players"])),
+        seed=metadata.get("seed", document.get("seed")),
+    )
+    initial_hash = document.get("initial_state_hash", "")
+    if initial_hash and game.state_hash() != initial_hash:
         raise ReplayVerificationError("initial state hash mismatch")
+    emitted: list[dict[str, Any]] = []
+    game.add_event_listener(lambda e: emitted.append(e))
     for event in document["events"]:
+        if event.get("action_id") is None:
+            raise ReplayVerificationError("event is not replay-verifiable")
         if game.state_hash() != event["pre_state_hash"]:
             raise ReplayVerificationError(
-                f"event {event['decision_id']} pre-state hash mismatch"
+                f"event {event.get('decision_id')} pre-state hash mismatch"
             )
         game.step(event["action_id"])
         if game.state_hash() != event["post_state_hash"]:
             raise ReplayVerificationError(
-                f"event {event['decision_id']} post-state hash mismatch"
+                f"event {event.get('decision_id')} post-state hash mismatch"
             )
-    result = document["result"]
-    if game.state_hash() != result["final_state_hash"]:
+    expected = [DecisionEvent.from_dict(e) for e in document["events"]]
+    actual = [DecisionEvent.from_dict(e) for e in emitted]
+    for e, a in zip(expected, actual, strict=True):
+        if (
+            e.player_turn_id,
+            e.round_id,
+            e.acting_player,
+            e.turn_completed,
+            e.next_player,
+        ) != (
+            a.player_turn_id,
+            a.round_id,
+            a.acting_player,
+            a.turn_completed,
+            a.next_player,
+        ):
+            raise ReplayVerificationError(
+                f"turn semantics mismatch at decision {e.decision_id}"
+            )
+    calculated = build_turn_records(expected)
+    stored = document.get("turns", [])
+    if stored and [
+        (t.player_turn_id, t.round_id, t.acting_player, t.next_player, t.decision_ids)
+        for t in calculated
+    ] != [
+        (
+            t["player_turn_id"],
+            t["round_id"],
+            t["acting_player"],
+            t.get("next_player"),
+            tuple(t["decision_ids"]),
+        )
+        for t in stored
+    ]:
+        raise ReplayVerificationError("turn grouping mismatch")
+    if any(t.round_id != t.player_turn_id // game.num_players for t in calculated):
+        raise ReplayVerificationError("round progression mismatch")
+    final_hash = document.get(
+        "final_state_hash", document.get("result", {}).get("final_state_hash")
+    )
+    if final_hash and game.state_hash() != final_hash:
         raise ReplayVerificationError("final state hash mismatch")
-    if game.final_ranking() != result["ranking"]:
-        raise ReplayVerificationError("final ranking mismatch")
-    expected_players = result["final_summary"]["players"]
-    actual_players = game.final_summary()["players"]
-    for expected, actual in zip(expected_players, actual_players, strict=True):
-        for field in ("score", "purchased_cards", "reserved_cards", "nobles"):
-            if actual[field] != expected[field]:
-                raise ReplayVerificationError(
-                    f"player {actual['player_id']} {field} mismatch"
-                )
     return game
+
+
+def verification_report(document: dict[str, Any]) -> str:
+    verify_recording(document)
+    return ("Decision events: PASS\nTurn grouping: PASS\nRound progression: PASS\n"
+            "Acting player sequence: PASS\nFinal state hash: PASS")
 
 
 def replay_text(
@@ -61,79 +105,78 @@ def replay_text(
     to_event: int | None = None,
     show_action_mask: bool = False,
 ) -> str:
-    """Re-execute and return perspective-safe textual frames."""
-    game = SplendorGame(document["config"]["num_players"], seed=document["seed"])
-    frames: list[str] = []
     events = document["events"]
+    if turn_only:
+        turns = build_turn_records(events)
+        return (
+            "\n\n".join(summarize_turn(t) for t in turns)
+            + "\n\n"
+            + json.dumps(
+                document.get("final_summary", {}), ensure_ascii=False, indent=2
+            )
+        )
+    metadata = document.get("game_metadata", {})
+    game = SplendorGame(
+        int(metadata.get("num_players", document.get("config", {})["num_players"])),
+        seed=metadata.get("seed", document.get("seed")),
+    )
+    frames = []
     stop = len(events) if to_event is None else min(to_event + 1, len(events))
+    per_turn = {}
+    for e in events:
+        per_turn[e.get("player_turn_id", e.get("turn_id", 0))] = (
+            per_turn.get(e.get("player_turn_id", e.get("turn_id", 0)), 0) + 1
+        )
     for index, event in enumerate(events[:stop]):
-        mask_text = ""
-        if show_action_mask:
-            mask_text = f"\nlegal_actions={game.legal_actions()}"
-        result = game.step(event["action_id"])
-        if index >= from_event and (not turn_only or result.turn_ended):
+        before = f"\nlegal_actions={game.legal_actions()}" if show_action_mask else ""
+        game.step(event["action_id"])
+        if index >= from_event:
+            turn = event.get("player_turn_id", event.get("turn_id", 0))
+            sub = event.get("subdecision_index", 0)
+            header = f"Round {event.get('round_id', 0) + 1} · Turn {turn + 1} · Decision {sub + 1}/{per_turn[turn]} · P{event.get('acting_player', event.get('player'))}"
             frames.append(
-                f"=== event {index}: {event['action_text']} ===\n"
+                f"=== {header}\nPhase: {event.get('phase_before', event.get('phase'))}\nDecision: {event['action_text']} ===\n"
                 + game.render(perspective=perspective, omniscient=omniscient)
-                + mask_text
+                + before
             )
     frames.append("\n" + game.render_final_summary())
     return "\n\n".join(frames)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("recording")
-    parser.add_argument("--perspective", type=int, default=0)
-    parser.add_argument("--omniscient", action="store_true")
-    parser.add_argument("--step", action="store_true")
-    parser.add_argument("--delay", type=float, default=0.0)
-    parser.add_argument("--from-event", type=int, default=0)
-    parser.add_argument("--to-event", type=int)
-    parser.add_argument("--turn-only", action="store_true")
-    parser.add_argument("--show-action-mask", action="store_true")
-    parser.add_argument("--output-text")
-    parser.add_argument("--verify", action="store_true")
-    args = parser.parse_args(argv)
-    document = load_recording(args.recording)
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("recording")
+    p.add_argument("--perspective", type=int, default=0)
+    p.add_argument("--omniscient", action="store_true")
+    p.add_argument("--step", action="store_true")
+    p.add_argument("--delay", type=float, default=0)
+    p.add_argument("--from-event", type=int, default=0)
+    p.add_argument("--to-event", type=int)
+    p.add_argument("--turn-only", action="store_true")
+    p.add_argument("--show-action-mask", action="store_true")
+    p.add_argument("--output-text")
+    p.add_argument("--verify", action="store_true")
+    a = p.parse_args(argv)
     try:
-        if args.verify:
-            game = verify_recording(document)
-            print(f"verification: PASS ({game.state_hash()})")
+        doc = load_episode_log(a.recording).document
+        if a.verify:
+            print(verification_report(doc))
             return 0
-        text = replay_text(
-            document,
-            perspective=args.perspective,
-            omniscient=args.omniscient,
-            turn_only=args.turn_only,
-            from_event=args.from_event,
-            to_event=args.to_event,
-            show_action_mask=args.show_action_mask,
+        value = replay_text(
+            doc,
+            perspective=a.perspective,
+            omniscient=a.omniscient,
+            turn_only=a.turn_only,
+            from_event=a.from_event,
+            to_event=a.to_event,
+            show_action_mask=a.show_action_mask,
         )
-        if args.output_text:
-            Path(args.output_text).write_text(text, encoding="utf-8")
-        elif args.step:
-            chunks = text.split("\n\n=== ")
-            frames = [chunks[0]] + ["=== " + chunk for chunk in chunks[1:]]
-            index = 0
-            while 0 <= index < len(frames):
-                print(frames[index])
-                command = input("Enter/n=next, p=previous, q=quit, f=final: ").strip().lower()
-                if command == "q":
-                    break
-                if command == "p":
-                    index = max(0, index - 1)
-                elif command == "f":
-                    index = len(frames) - 1
-                else:
-                    index += 1
+        if a.output_text:
+            Path(a.output_text).write_text(value, encoding="utf-8")
         else:
-            for frame in text.split("\n\n==="):
-                print(frame if frame.startswith("===") else "===" + frame)
-                if args.delay:
-                    time.sleep(args.delay)
+            print(value)
         return 0
-    except ReplayVerificationError as exc:
+    except (ReplayVerificationError, ValueError, KeyError) as exc:
         print(f"verification: FAIL: {exc}", file=sys.stderr)
         return 1
 

@@ -190,11 +190,16 @@ def load_cards() -> tuple[Card, ...]:
             )
         )
     assert len(cards) == 90
-    assert [sum(card.tier == tier for card in cards) for tier in range(3)] == [40, 30, 20]
+    assert [sum(card.tier == tier for card in cards) for tier in range(3)] == [
+        40,
+        30,
+        20,
+    ]
     assert len({card.card_id for card in cards}) == 90
     for tier, expected in enumerate((8, 6, 4)):
         assert all(
-            sum(card.tier == tier and card.bonus_color == color for card in cards) == expected
+            sum(card.tier == tier and card.bonus_color == color for card in cards)
+            == expected
             for color in GEM_COLORS
         )
     return tuple(cards)

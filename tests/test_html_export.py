@@ -23,8 +23,8 @@ def test_self_contained_html_and_controls(tmp_path) -> None:
     source, game, _ = recorded_private_reservation(tmp_path)
     output = export_replay(source, tmp_path / "viewer.html")
     text = output.read_text(encoding="utf-8")
-    assert "id=\"perspective\"" in text
-    assert "id=\"eventSlider\"" in text
+    assert 'id="perspective"' in text
+    assert 'id="eventSlider"' in text
     assert "Previous turn" in text and "Next decision" in text
     assert "http://" not in text and "https://" not in text
     live = export_game_view(game, tmp_path / "live.html", perspective=1)
@@ -41,7 +41,9 @@ def test_perspective_sanitized_export_contains_no_private_id(tmp_path) -> None:
     )
     text = output.read_text(encoding="utf-8")
     assert hidden_id not in text
-    assert "Hidden reservation" in text  # Bundled renderer supports the masked card face.
+    assert (
+        "Hidden reservation" in text
+    )  # Bundled renderer supports the masked card face.
 
 
 def test_script_breakout_text_is_escaped(tmp_path) -> None:

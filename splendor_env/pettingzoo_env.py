@@ -173,9 +173,7 @@ class raw_env(AECEnv):
             self.terminations = {
                 name: bool(self.game.terminated) for name in self.agents
             }
-            self.truncations = {
-                name: bool(self.game.truncated) for name in self.agents
-            }
+            self.truncations = {name: bool(self.game.truncated) for name in self.agents}
         else:
             self.agent_selection = self.possible_agents[self.game.current_player]
 
@@ -209,8 +207,7 @@ class raw_env(AECEnv):
                 {
                     "end_reason": self.game.end_reason,
                     "winner_indices": self.game.winners(),
-                    "is_winner": self.agent_name_mapping[agent]
-                    in self.game.winners(),
+                    "is_winner": self.agent_name_mapping[agent] in self.game.winners(),
                 }
             )
         return info

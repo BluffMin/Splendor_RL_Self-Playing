@@ -24,14 +24,28 @@ def test_masked_rollout_and_spaces(players: int) -> None:
         obs, _, terminated, truncated, info = environment.last()
         assert obs["observation"].shape == (475,)
         assert obs["action_mask"].shape == (373,)
-        assert {"phase", "decision_id", "turn_id", "round_id", "acting_player", "turn_completed", "automatic_resolution"} <= info.keys()
-        action = None if terminated or truncated else int(rng.choice(np.flatnonzero(obs["action_mask"])))
+        assert {
+            "phase",
+            "decision_id",
+            "turn_id",
+            "round_id",
+            "acting_player",
+            "turn_completed",
+            "automatic_resolution",
+        } <= info.keys()
+        action = (
+            None
+            if terminated or truncated
+            else int(rng.choice(np.flatnonzero(obs["action_mask"])))
+        )
         environment.step(action)
     assert not environment.agents
 
 
 def test_api() -> None:
-    api_test(raw_env(num_players=2, max_turns=80), num_cycles=1000, verbose_progress=False)
+    api_test(
+        raw_env(num_players=2, max_turns=80), num_cycles=1000, verbose_progress=False
+    )
 
 
 def test_max_turns_is_truncation_not_termination() -> None:

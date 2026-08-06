@@ -11,10 +11,20 @@ def test_private_reservation_visibility() -> None:
     card_id = game.players[0].reserved[0].card.card_id
     own = board_view_from_game(game, perspective=0).players[0].reserved_cards[0]
     opponent = board_view_from_game(game, perspective=1).players[0].reserved_cards[0]
-    omniscient = board_view_from_game(game, perspective="omniscient").players[0].reserved_cards[0]
+    omniscient = (
+        board_view_from_game(game, perspective="omniscient")
+        .players[0]
+        .reserved_cards[0]
+    )
     assert own.card_id == omniscient.card_id == card_id
     assert opponent.tier == 2 and opponent.reservation_origin == "deck"
-    assert opponent.card_id is opponent.cost is opponent.points is opponent.bonus_color is None
+    assert (
+        opponent.card_id
+        is opponent.cost
+        is opponent.points
+        is opponent.bonus_color
+        is None
+    )
 
 
 def test_visible_reservation_is_public() -> None:

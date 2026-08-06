@@ -9,7 +9,9 @@ from ..core import SplendorGame
 class RandomLegalAgent:
     """Uniform seeded sampler over the current legal action mask."""
 
-    def __init__(self, seed: int | None = None, *, avoid_deadlock: bool = False) -> None:
+    def __init__(
+        self, seed: int | None = None, *, avoid_deadlock: bool = False
+    ) -> None:
         self.rng = np.random.default_rng(seed)
         self.avoid_deadlock = bool(avoid_deadlock)
 
@@ -20,7 +22,9 @@ class RandomLegalAgent:
                 {"buy_visible", "buy_reserved"},
                 {"take_distinct", "take_double"},
             ):
-                preferred = [action for action in legal if ACTIONS[action].kind in kinds]
+                preferred = [
+                    action for action in legal if ACTIONS[action].kind in kinds
+                ]
                 if preferred:
                     legal = preferred
                     break

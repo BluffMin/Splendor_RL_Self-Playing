@@ -17,6 +17,7 @@ class GreedyAgent:
             return min(a for a in legal if a >= NOBLE_OFFSET)
         buys = [a for a in legal if ACTIONS[a].kind in {"buy_visible", "buy_reserved"}]
         if buys:
+
             def value(action: int) -> tuple[int, int, int]:
                 spec = ACTIONS[action]
                 card = (
@@ -26,8 +27,11 @@ class GreedyAgent:
                 )
                 assert card is not None
                 return (-card.points, sum(card.cost), action)
+
             return min(buys, key=value)
-        takes = [a for a in legal if ACTIONS[a].kind in {"take_distinct", "take_double"}]
+        takes = [
+            a for a in legal if ACTIONS[a].kind in {"take_distinct", "take_double"}
+        ]
         if takes:
             return min(takes)
         return min(legal)

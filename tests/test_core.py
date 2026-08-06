@@ -41,15 +41,34 @@ def test_card_and_noble_data_are_structurally_complete() -> None:
     assert [sum(c.tier == tier for c in CARDS) for tier in range(3)] == [40, 30, 20]
     assert len({c.card_id for c in CARDS}) == 90
     for tier, expected in enumerate((8, 6, 4)):
-        assert [sum(c.tier == tier and c.bonus_color == color for c in CARDS) for color in GEM_COLORS] == [expected] * 5
-    white = [c for c in CARDS if c.tier == 1 and c.bonus_color == "white" and c.points == 2 and c.cost == (0, 0, 1, 4, 2)]
-    blue = [c for c in CARDS if c.tier == 1 and c.bonus_color == "blue" and c.points == 2 and c.cost == (2, 0, 0, 1, 4)]
+        assert [
+            sum(c.tier == tier and c.bonus_color == color for c in CARDS)
+            for color in GEM_COLORS
+        ] == [expected] * 5
+    white = [
+        c
+        for c in CARDS
+        if c.tier == 1
+        and c.bonus_color == "white"
+        and c.points == 2
+        and c.cost == (0, 0, 1, 4, 2)
+    ]
+    blue = [
+        c
+        for c in CARDS
+        if c.tier == 1
+        and c.bonus_color == "blue"
+        and c.points == 2
+        and c.cost == (2, 0, 0, 1, 4)
+    ]
     assert len(white) == len(blue) == 1
     assert len(NOBLES) == 10
     assert all(n.points == 3 for n in NOBLES)
     assert len({n.noble_id for n in NOBLES}) == 10
     assert len({n.requirements for n in NOBLES}) == 10
-    assert sorted(sum(x > 0 for x in n.requirements) for n in NOBLES) == [2] * 5 + [3] * 5
+    assert (
+        sorted(sum(x > 0 for x in n.requirements) for n in NOBLES) == [2] * 5 + [3] * 5
+    )
 
 
 @pytest.mark.parametrize("num_players,colored", [(2, 4), (3, 5), (4, 7)])
@@ -83,7 +102,10 @@ def test_payment_plan_enumeration_is_complete_and_deterministic() -> None:
     assert any(p.colored[0] == 1 and p.gold_by_color[0] == 1 for p in plans)
     assert any(p.gold_by_color[0] == 1 and p.gold_by_color[1] == 1 for p in plans)
     for plan in plans:
-        assert tuple(plan.colored[i] + plan.gold_by_color[i] for i in range(5)) == card.cost
+        assert (
+            tuple(plan.colored[i] + plan.gold_by_color[i] for i in range(5))
+            == card.cost
+        )
     poor = PlayerState()
     assert enumerate_legal_payment_plans(poor, make_card((1, 0, 0, 0, 0))) == ()
 
@@ -138,7 +160,9 @@ def test_purchase_uses_selected_payment_and_conserves_tokens() -> None:
     game.bank[5] -= 1
     game.step(action_id("buy_visible", 0))
     assert game.phase == Phase.PAYMENT
-    plan_index = next(i for i, p in enumerate(game.pending_payment_plans) if p.total_gold == 1)
+    plan_index = next(
+        i for i, p in enumerate(game.pending_payment_plans) if p.total_gold == 1
+    )
     game.step(PAYMENT_OFFSET + plan_index)
     assert card in game.players[0].purchased
     game.validate_invariants()
@@ -197,7 +221,9 @@ def test_noble_auto_award_and_multiple_choice() -> None:
 
     multiple = SplendorGame(2, seed=13)
     multiple.nobles = [NOBLES[0], NOBLES[1]]
-    multiple.players[0].bonuses[:] = np.maximum(NOBLES[0].requirements, NOBLES[1].requirements)
+    multiple.players[0].bonuses[:] = np.maximum(
+        NOBLES[0].requirements, NOBLES[1].requirements
+    )
     multiple._resolve_noble_or_end_turn()
     assert multiple.phase == Phase.NOBLE
     multiple._choose_noble(0)

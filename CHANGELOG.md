@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.2 - Correct player-turn semantics and legacy-log migration
+
+- Separated decision, player turn, and round counters.
+- Added `DecisionEvent` and `TurnRecord` schemas.
+- Fixed acting-player versus next-player rendering and turn navigation.
+- Grouped payment, discard, and noble choices into one player turn.
+- Added schema-versioned recording, legacy loading, and non-destructive migration.
+
 ## 0.3.1 — Visual board and replay viewer
 
 - Added an offline browser board visualization with original CSS card/token graphics.

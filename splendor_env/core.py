@@ -25,6 +25,7 @@ from .actions import (
     describe_action,
 )
 from .data import CARDS, NOBLES, Card, Noble
+from .event_schema import SCHEMA_VERSION, DecisionEvent
 
 MAX_PLAYERS = 4
 MAX_RESERVED = 3
@@ -124,6 +125,8 @@ class EngineStep:
     decision_id: int
     turn_id: int
     round_id: int
+    player_turn_id: int
+    subdecision_index: int
     automatic_resolution: tuple[str, ...] = ()
 
 
@@ -136,7 +139,9 @@ def enumerate_legal_payment_plans(
     ranges = [range(int(required[i]) + 1) for i in range(5)]
     for gold in product(*ranges):
         colored = tuple(int(required[i]) - gold[i] for i in range(5))
-        if all(colored[i] <= int(player.tokens[i]) for i in range(5)) and sum(gold) <= int(player.tokens[5]):
+        if all(colored[i] <= int(player.tokens[i]) for i in range(5)) and sum(
+            gold
+        ) <= int(player.tokens[5]):
             plans.append(PaymentPlan(colored, tuple(int(x) for x in gold)))
     plans.sort(key=lambda plan: (plan.total_gold, plan.colored, plan.gold_by_color))
     return tuple(plans)
@@ -183,6 +188,15 @@ class SplendorGame:
     def round_id(self) -> int:
         return self.turns_completed // self.num_players
 
+    @property
+    def player_turn_id(self) -> int:
+        """Zero-based ID of the player turn currently being resolved."""
+        return self.turns_completed
+
+    @property
+    def turn_actor(self) -> int:
+        return self.current_player
+
     def add_event_listener(self, listener: Callable[[dict[str, Any]], None]) -> None:
         """Attach a passive decision-event listener."""
         if listener not in self._listeners:
@@ -197,7 +211,9 @@ class SplendorGame:
             self._seed = seed
         self.rng = np.random.default_rng(self._seed)
         self.players = [PlayerState() for _ in range(self.num_players)]
-        self.bank = np.asarray([self.initial_colored_token_count] * 5 + [5], dtype=np.int16)
+        self.bank = np.asarray(
+            [self.initial_colored_token_count] * 5 + [5], dtype=np.int16
+        )
         self.decks = []
         for tier in range(3):
             deck = [card for card in CARDS if card.tier == tier]
@@ -207,7 +223,9 @@ class SplendorGame:
         for tier in range(3):
             for slot in range(4):
                 self.visible[tier][slot] = self._draw(tier)
-        noble_indices = self.rng.choice(len(NOBLES), size=self.num_players + 1, replace=False)
+        noble_indices = self.rng.choice(
+            len(NOBLES), size=self.num_players + 1, replace=False
+        )
         selected = {int(i) for i in noble_indices}
         self.nobles = [NOBLES[i] for i in sorted(selected)]
         self.unused_nobles = [n for i, n in enumerate(NOBLES) if i not in selected]
@@ -215,6 +233,8 @@ class SplendorGame:
         self.phase = Phase.NORMAL
         self.turns_completed = 0
         self.decision_id = 0
+        self.event_sequence_id = 0
+        self.subdecision_index = 0
         self.final_round_triggered = False
         self.trigger_player: int | None = None
         self.terminated = False
@@ -250,12 +270,18 @@ class SplendorGame:
     def eligible_noble_slots(self, player_index: int | None = None) -> list[int]:
         player_index = self.current_player if player_index is None else player_index
         bonuses = self.players[player_index].bonuses
-        return [i for i, n in enumerate(self.nobles) if np.all(bonuses >= np.asarray(n.requirements))]
+        return [
+            i
+            for i, n in enumerate(self.nobles)
+            if np.all(bonuses >= np.asarray(n.requirements))
+        ]
 
     def legal_action_mask(self, player_index: int | None = None) -> np.ndarray:
         """Return a 373-entry mask with only the current phase region enabled."""
         mask = np.zeros(N_ACTIONS, dtype=np.int8)
-        if self.done or (player_index is not None and player_index != self.current_player):
+        if self.done or (
+            player_index is not None and player_index != self.current_player
+        ):
             return mask
         if self.phase == Phase.PAYMENT:
             if not self.pending_payment_plans:
@@ -277,7 +303,9 @@ class SplendorGame:
         if available:
             required_size = min(3, len(available))
             for action, spec in enumerate(ACTIONS[:25]):
-                if len(spec.payload) == required_size and all(self.bank[c] > 0 for c in spec.payload):
+                if len(spec.payload) == required_size and all(
+                    self.bank[c] > 0 for c in spec.payload
+                ):
                     mask[action] = 1
         for color in range(5):
             if self.bank[color] >= 4:
@@ -313,12 +341,16 @@ class SplendorGame:
             raise RuntimeError("cannot step a finished game")
         action = int(action)
         if not 0 <= action < N_ACTIONS or not self.legal_action_mask()[action]:
-            raise InvalidActionError(f"illegal action {action}: {describe_action(action)}")
+            raise InvalidActionError(
+                f"illegal action {action}: {describe_action(action)}"
+            )
         pre_hash = self.state_hash()
+        pre_snapshot = self.to_state_dict()
         actor = self.current_player
         score_before = self.players[actor].score
         turn_before = self.turns_completed
         phase_before = self.phase
+        subdecision_index = self.subdecision_index
         turn_id = self.turns_completed
         round_id = self.round_id
         self._automatic = []
@@ -360,7 +392,9 @@ class SplendorGame:
         elif spec.kind == "buy_reserved":
             action_params = {"slot": int(spec.payload)}
             slot = int(spec.payload)
-            self._begin_purchase("reserved", slot, self.players[actor].reserved[slot].card)
+            self._begin_purchase(
+                "reserved", slot, self.players[actor].reserved[slot].card
+            )
         else:
             raise RuntimeError(f"unexpected action {spec}")
         self.last_action = action
@@ -379,24 +413,41 @@ class SplendorGame:
             decision_id=self.decision_id - 1,
             turn_id=turn_id,
             round_id=round_id,
+            player_turn_id=turn_id,
+            subdecision_index=subdecision_index,
             automatic_resolution=tuple(self._automatic),
         )
-        event = {
-            "decision_id": result.decision_id,
-            "turn_id": turn_id,
-            "round_id": round_id,
-            "phase": phase_before.value,
-            "player": actor,
-            "action_id": action,
-            "action_type": spec.kind,
-            "action_params": action_params,
-            "action_text": describe_action(action),
-            "automatic": False,
-            "automatic_resolution": list(self._automatic),
-            "turn_completed": result.turn_ended,
-            "pre_state_hash": pre_hash,
-            "post_state_hash": self.state_hash(),
-        }
+        post_hash = self.state_hash()
+        event = DecisionEvent(
+            schema_version=SCHEMA_VERSION,
+            event_sequence_id=self.event_sequence_id,
+            decision_id=result.decision_id,
+            player_turn_id=turn_id,
+            round_id=round_id,
+            subdecision_index=subdecision_index,
+            acting_player=actor,
+            phase_before=phase_before.value,
+            phase_after=self.phase.value,
+            action_id=action,
+            action_type=spec.kind,
+            action_params=action_params,
+            action_text=describe_action(action),
+            automatic=False,
+            turn_started=subdecision_index == 0,
+            turn_completed=result.turn_ended,
+            next_player=(None if self.done else self.current_player)
+            if result.turn_ended
+            else None,
+            pre_state_hash=pre_hash,
+            post_state_hash=post_hash,
+            pre_snapshot=pre_snapshot,
+            post_snapshot=self.to_state_dict(),
+            automatic_resolution=tuple(self._automatic),
+        ).to_dict()
+        # Compatibility aliases are read-only metadata for pre-v0.3.2 clients.
+        event.update({"turn_id": turn_id, "phase": phase_before.value, "player": actor})
+        self.event_sequence_id += 1
+        self.subdecision_index = 0 if result.turn_ended else subdecision_index + 1
         for listener in tuple(self._listeners):
             listener(event)
         return result
@@ -439,7 +490,11 @@ class SplendorGame:
         self.bank[:5] += colored
         player.tokens[5] -= plan.total_gold
         self.bank[5] += plan.total_gold
-        removed = self._remove_visible(slot) if source == "visible" else player.reserved.pop(slot).card
+        removed = (
+            self._remove_visible(slot)
+            if source == "visible"
+            else player.reserved.pop(slot).card
+        )
         if removed.card_id != card.card_id:
             raise RuntimeError("pending purchase card changed")
         player.purchased.append(card)
@@ -452,7 +507,9 @@ class SplendorGame:
     def _after_normal_action(self) -> None:
         excess = self.players[self.current_player].token_count - MAX_TOKENS
         if excess > 0:
-            plans = enumerate_legal_discard_plans(self.players[self.current_player], excess)
+            plans = enumerate_legal_discard_plans(
+                self.players[self.current_player], excess
+            )
             if len(plans) > DISCARD_SIZE:
                 raise RuntimeError(f"discard plan region overflow: {len(plans)}")
             self.pending_discard_plans = plans
@@ -496,7 +553,10 @@ class SplendorGame:
     def _end_turn(self) -> None:
         actor = self.current_player
         self.turns_completed += 1
-        if not self.final_round_triggered and self.players[actor].score >= WINNING_SCORE:
+        if (
+            not self.final_round_triggered
+            and self.players[actor].score >= WINNING_SCORE
+        ):
             self.final_round_triggered = True
             self.trigger_player = actor
         if self.final_round_triggered and actor == self.num_players - 1:
@@ -549,7 +609,9 @@ class SplendorGame:
                 rewards[i] = penalty
         return rewards
 
-    def _reservation_visible(self, owner: int, perspective: int, reservation: Reservation, omniscient: bool) -> bool:
+    def _reservation_visible(
+        self, owner: int, perspective: int, reservation: Reservation, omniscient: bool
+    ) -> bool:
         return omniscient or owner == perspective or not reservation.hidden_to_opponents
 
     def observation(self, perspective: int, *, omniscient: bool = False) -> np.ndarray:
@@ -557,39 +619,74 @@ class SplendorGame:
         if not 0 <= perspective < self.num_players:
             raise ValueError("invalid perspective")
         values: list[float] = [float(self.phase == phase) for phase in PHASES]
-        values += [float(self.done), float(self.final_round_triggered), min(self.round_id / 50.0, 1.0)]
-        values += (self.bank.astype(np.float32) / np.asarray([7, 7, 7, 7, 7, 5])).tolist()
+        values += [
+            float(self.done),
+            float(self.final_round_triggered),
+            min(self.round_id / 50.0, 1.0),
+        ]
+        values += (
+            self.bank.astype(np.float32) / np.asarray([7, 7, 7, 7, 7, 5])
+        ).tolist()
         values += [len(self.decks[i]) / (40, 30, 20)[i] for i in range(3)]
         for tier in range(3):
             for slot in range(4):
                 values += self._encode_card(self.visible[tier][slot])
         for slot in range(MAX_NOBLES):
-            values += self._encode_noble(self.nobles[slot] if slot < len(self.nobles) else None)
+            values += self._encode_noble(
+                self.nobles[slot] if slot < len(self.nobles) else None
+            )
         # Pending purchase: present, visible-origin, private-origin, tier one-hot, payload.
         pending = [0.0] * 17
         if self.pending_purchase is not None:
             source, _, card = self.pending_purchase
-            reservation = next((r for r in self.players[self.current_player].reserved if r.card.card_id == card.card_id), None)
+            reservation = next(
+                (
+                    r
+                    for r in self.players[self.current_player].reserved
+                    if r.card.card_id == card.card_id
+                ),
+                None,
+            )
             is_private = reservation is not None and reservation.hidden_to_opponents
             pending[:3] = [1.0, float(not is_private), float(is_private)]
             pending[3 + card.tier] = 1.0
-            can_see = source == "visible" or reservation is None or self._reservation_visible(self.current_player, perspective, reservation, omniscient)
+            can_see = (
+                source == "visible"
+                or reservation is None
+                or self._reservation_visible(
+                    self.current_player, perspective, reservation, omniscient
+                )
+            )
             if can_see:
                 pending[6:] = self._encode_card(card)[1:]
         values += pending
-        values += [min(len(self.pending_payment_plans) / PAYMENT_SIZE, 1.0), min(max(self.players[self.current_player].token_count - 10, 0) / 3.0, 1.0)]
+        values += [
+            min(len(self.pending_payment_plans) / PAYMENT_SIZE, 1.0),
+            min(max(self.players[self.current_player].token_count - 10, 0) / 3.0, 1.0),
+        ]
         assert len(values) == GLOBAL_OBSERVATION_SIZE
-        order = [(perspective + offset) % self.num_players for offset in range(self.num_players)]
+        order = [
+            (perspective + offset) % self.num_players
+            for offset in range(self.num_players)
+        ]
         for player_slot in range(MAX_PLAYERS):
             if player_slot >= self.num_players:
                 values += [0.0] * PLAYER_BLOCK_SIZE
                 continue
             player_index = order[player_slot]
             player = self.players[player_index]
-            values += [1.0, float(player_index == self.current_player and not self.done)]
+            values += [
+                1.0,
+                float(player_index == self.current_player and not self.done),
+            ]
             values += np.clip(player.tokens.astype(np.float32) / 13.0, 0, 1).tolist()
             values += np.clip(player.bonuses.astype(np.float32) / 20.0, 0, 1).tolist()
-            values += [min(player.score / 30.0, 1.0), min(len(player.purchased) / 30.0, 1.0), min(len(player.nobles) / 5.0, 1.0), len(player.reserved) / 3.0]
+            values += [
+                min(player.score / 30.0, 1.0),
+                min(len(player.purchased) / 30.0, 1.0),
+                min(len(player.nobles) / 5.0, 1.0),
+                len(player.reserved) / 3.0,
+            ]
             for reserved_slot in range(MAX_RESERVED):
                 if reserved_slot >= len(player.reserved):
                     values += [0.0] * RESERVED_SLOT_SIZE
@@ -598,13 +695,17 @@ class SplendorGame:
                 tier = [0.0] * 3
                 tier[reservation.card.tier] = 1.0
                 values += [1.0, float(reservation.hidden_to_opponents)] + tier
-                if self._reservation_visible(player_index, perspective, reservation, omniscient):
+                if self._reservation_visible(
+                    player_index, perspective, reservation, omniscient
+                ):
                     values += self._encode_card(reservation.card)[1:]
                 else:
                     values += [0.0] * 11
         result = np.asarray(values, dtype=np.float32)
         if result.shape != (OBSERVATION_SIZE,):
-            raise RuntimeError(f"encoder produced {result.shape}, expected {(OBSERVATION_SIZE,)}")
+            raise RuntimeError(
+                f"encoder produced {result.shape}, expected {(OBSERVATION_SIZE,)}"
+            )
         return np.clip(result, 0, 1)
 
     @staticmethod
@@ -617,7 +718,11 @@ class SplendorGame:
 
     @staticmethod
     def _encode_noble(noble: Noble | None) -> list[float]:
-        return [0.0] * 7 if noble is None else [1.0, noble.points / 3.0] + [cost / 4.0 for cost in noble.requirements]
+        return (
+            [0.0] * 7
+            if noble is None
+            else [1.0, noble.points / 3.0] + [cost / 4.0 for cost in noble.requirements]
+        )
 
     def state(self) -> np.ndarray:
         return self.observation(0, omniscient=True)
@@ -635,7 +740,9 @@ class SplendorGame:
             "decision_id": self.decision_id,
             "bank": self.bank.tolist(),
             "decks": [[c.card_id for c in deck] for deck in self.decks],
-            "visible": [[c.card_id if c else None for c in row] for row in self.visible],
+            "visible": [
+                [c.card_id if c else None for c in row] for row in self.visible
+            ],
             "nobles": [n.noble_id for n in self.nobles],
             "unused_nobles": [n.noble_id for n in self.unused_nobles],
             "players": [
@@ -644,12 +751,21 @@ class SplendorGame:
                     "bonuses": p.bonuses.tolist(),
                     "score": p.score,
                     "purchased": [c.card_id for c in p.purchased],
-                    "reserved": [{"card_id": r.card.card_id, "origin": r.origin} for r in p.reserved],
+                    "reserved": [
+                        {"card_id": r.card.card_id, "origin": r.origin}
+                        for r in p.reserved
+                    ],
                     "nobles": [n.noble_id for n in p.nobles],
                 }
                 for p in self.players
             ],
-            "pending_purchase": None if self.pending_purchase is None else {"source": self.pending_purchase[0], "slot": self.pending_purchase[1], "card_id": self.pending_purchase[2].card_id},
+            "pending_purchase": None
+            if self.pending_purchase is None
+            else {
+                "source": self.pending_purchase[0],
+                "slot": self.pending_purchase[1],
+                "card_id": self.pending_purchase[2].card_id,
+            },
             "pending_payment_plans": [p.to_dict() for p in self.pending_payment_plans],
             "pending_discard_plans": [p.to_dict() for p in self.pending_discard_plans],
             "final_round_triggered": self.final_round_triggered,
@@ -660,26 +776,51 @@ class SplendorGame:
         }
 
     def state_hash(self) -> str:
-        payload = json.dumps(self.to_state_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        payload = json.dumps(
+            self.to_state_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def final_summary(self) -> dict[str, Any]:
         """Return complete final holdings and competition ranks."""
-        rank_by_player = {p: group["rank"] for group in self.final_ranking() for p in group["players"]}
+        rank_by_player = {
+            p: group["rank"] for group in self.final_ranking() for p in group["players"]
+        }
         players = []
         for i, player in enumerate(self.players):
-            players.append({
-                "player_id": i,
-                "rank": rank_by_player[i],
-                "score": player.score,
-                "tokens": dict(zip(TOKEN_COLORS, map(int, player.tokens), strict=True)),
-                "bonuses": dict(zip(GEM_COLORS, map(int, player.bonuses), strict=True)),
-                "purchased_card_count": len(player.purchased),
-                "purchased_cards": [card.to_dict() for card in player.purchased],
-                "reserved_cards": [{**r.card.to_dict(), "origin": r.origin, "hidden_to_opponents": r.hidden_to_opponents} for r in player.reserved],
-                "nobles": [n.to_dict() for n in player.nobles],
-            })
-        return {"ranking": self.final_ranking(), "winner_ids": self.winner_ids(), "players": players, "state_hash": self.state_hash()}
+            players.append(
+                {
+                    "player_id": i,
+                    "rank": rank_by_player[i],
+                    "score": player.score,
+                    "tokens": dict(
+                        zip(TOKEN_COLORS, map(int, player.tokens), strict=True)
+                    ),
+                    "bonuses": dict(
+                        zip(GEM_COLORS, map(int, player.bonuses), strict=True)
+                    ),
+                    "purchased_card_count": len(player.purchased),
+                    "purchased_cards": [card.to_dict() for card in player.purchased],
+                    "reserved_cards": [
+                        {
+                            **r.card.to_dict(),
+                            "origin": r.origin,
+                            "hidden_to_opponents": r.hidden_to_opponents,
+                        }
+                        for r in player.reserved
+                    ],
+                    "nobles": [n.to_dict() for n in player.nobles],
+                }
+            )
+        return {
+            "ranking": self.final_ranking(),
+            "winner_ids": self.winner_ids(),
+            "players": players,
+            "state_hash": self.state_hash(),
+        }
 
     def render_final_summary(self, omniscient: bool = True) -> str:
         del omniscient
@@ -687,43 +828,85 @@ class SplendorGame:
         for group in self.final_ranking():
             for player_id in group["players"]:
                 p = self.players[player_id]
-                lines.append(f"Rank {group['rank']}: P{player_id} — {p.score} points, {len(p.purchased)} purchased cards")
+                lines.append(
+                    f"Rank {group['rank']}: P{player_id} — {p.score} points, {len(p.purchased)} purchased cards"
+                )
         for i, player in enumerate(self.players):
-            lines += ["", f"P{i} purchased cards:"] + [f"  {c.short_text()}" for c in player.purchased]
-            lines += [f"P{i} reserved cards:"] + [f"  {r.origin}: {r.card.short_text()}" for r in player.reserved]
-            lines += [f"P{i} nobles:"] + [f"  {n.noble_id}: {n.points} pt, requires {n.requirements_by_color()}" for n in player.nobles]
+            lines += ["", f"P{i} purchased cards:"] + [
+                f"  {c.short_text()}" for c in player.purchased
+            ]
+            lines += [f"P{i} reserved cards:"] + [
+                f"  {r.origin}: {r.card.short_text()}" for r in player.reserved
+            ]
+            lines += [f"P{i} nobles:"] + [
+                f"  {n.noble_id}: {n.points} pt, requires {n.requirements_by_color()}"
+                for n in player.nobles
+            ]
         return "\n".join(lines)
 
-    def render(self, perspective: int | None = None, *, omniscient: bool = False, use_color: bool = False) -> str:
+    def render(
+        self,
+        perspective: int | None = None,
+        *,
+        omniscient: bool = False,
+        use_color: bool = False,
+    ) -> str:
         """Render a deterministic plain-text, perspective-safe game view."""
         del use_color
         perspective = self.current_player if perspective is None else perspective
         if not 0 <= perspective < self.num_players:
             raise ValueError("invalid perspective")
+
         def card_text(card: Card | None) -> str:
             return "[empty]" if card is None else card.short_text()
+
         lines = [
             f"Splendor | view=P{perspective} | round={self.round_id} | turn={self.turns_completed} | phase={self.phase.value} | player={self.current_player}",
-            "Bank  " + " ".join(f"{name}:{int(self.bank[i])}" for i, name in enumerate(TOKEN_COLORS)),
+            "Bank  "
+            + " ".join(
+                f"{name}:{int(self.bank[i])}" for i, name in enumerate(TOKEN_COLORS)
+            ),
         ]
         for tier in reversed(range(3)):
-            lines.append(f"Tier {tier + 1} ({len(self.decks[tier])} hidden): " + " | ".join(card_text(c) for c in self.visible[tier]))
-        lines.append("Nobles: " + " | ".join(f"{n.noble_id}:{n.requirements_by_color()}" for n in self.nobles))
+            lines.append(
+                f"Tier {tier + 1} ({len(self.decks[tier])} hidden): "
+                + " | ".join(card_text(c) for c in self.visible[tier])
+            )
+        lines.append(
+            "Nobles: "
+            + " | ".join(
+                f"{n.noble_id}:{n.requirements_by_color()}" for n in self.nobles
+            )
+        )
         if self.last_action_text:
             lines.append(f"Last action: P{self.last_actor} {self.last_action_text}")
         for i, player in enumerate(self.players):
             current = " <- current" if i == self.current_player else ""
-            lines.append(f"P{i}{current}: score={player.score}, cards={len(player.purchased)}, bonuses={player.bonuses.tolist()}, tokens={player.tokens.tolist()}, reserved={len(player.reserved)}, nobles={len(player.nobles)}")
+            lines.append(
+                f"P{i}{current}: score={player.score}, cards={len(player.purchased)}, bonuses={player.bonuses.tolist()}, tokens={player.tokens.tolist()}, reserved={len(player.reserved)}, nobles={len(player.nobles)}"
+            )
             if not player.reserved:
                 lines.append("  reserved: (none)")
             for reservation in player.reserved:
-                if not self._reservation_visible(i, perspective, reservation, omniscient):
-                    lines.append(f"  reserved: [Tier {reservation.card.tier + 1} hidden card]")
+                if not self._reservation_visible(
+                    i, perspective, reservation, omniscient
+                ):
+                    lines.append(
+                        f"  reserved: [Tier {reservation.card.tier + 1} hidden card]"
+                    )
                 else:
-                    label = "deck-private" if reservation.hidden_to_opponents else "visible-public"
-                    lines.append(f"  reserved: [{label}] {reservation.card.short_text()}")
+                    label = (
+                        "deck-private"
+                        if reservation.hidden_to_opponents
+                        else "visible-public"
+                    )
+                    lines.append(
+                        f"  reserved: [{label}] {reservation.card.short_text()}"
+                    )
         if self.done:
-            lines.append(f"END reason={self.end_reason}, winners={self.winner_ids()}, rewards={self.terminal_rewards().tolist()}")
+            lines.append(
+                f"END reason={self.end_reason}, winners={self.winner_ids()}, rewards={self.terminal_rewards().tolist()}"
+            )
         return "\n".join(lines)
 
     def validate_invariants(self) -> None:
@@ -745,12 +928,17 @@ class SplendorGame:
                 raise AssertionError("negative player tokens")
             if len(player.reserved) > MAX_RESERVED:
                 raise AssertionError("too many reserved cards")
-            if self.phase not in {Phase.DISCARD, Phase.TERMINAL} and player.token_count > MAX_TOKENS:
+            if (
+                self.phase not in {Phase.DISCARD, Phase.TERMINAL}
+                and player.token_count > MAX_TOKENS
+            ):
                 raise AssertionError("player above token limit outside discard")
             actual += player.tokens
             card_ids += [c.card_id for c in player.purchased]
             card_ids += [r.card.card_id for r in player.reserved]
-            score = sum(c.points for c in player.purchased) + sum(n.points for n in player.nobles)
+            score = sum(c.points for c in player.purchased) + sum(
+                n.points for n in player.nobles
+            )
             if player.score != score:
                 raise AssertionError("score does not match holdings")
             bonuses = np.zeros(5, dtype=np.int16)

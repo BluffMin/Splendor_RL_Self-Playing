@@ -1,5 +1,21 @@
 # Splendor Self-Play Environment
 
+## v0.3.2 turn-aware replay
+
+```powershell
+python examples/export_visual_replay.py --players 4 --agents greedy greedy random random --seed 42 --output-dir runs/v032_demo
+python -m splendor_env.replay runs/v032_demo/game.json --verify
+python -m splendor_env.replay runs/v032_demo/game.json --turn-only
+python -m splendor_env.replay runs/v032_demo/game.json
+```
+
+Turn mode groups purchase, payment, discard, and noble decisions into one player turn. Decision mode exposes each choice. See [time semantics](docs/time_semantics.md), [v0.3.2 schema](docs/log_schema_v032.md), and [legacy migration](docs/legacy_log_migration.md).
+
+```powershell
+python -m splendor_env.migrations.migrate_logs_v032 runs/old_logs --output-dir runs/migrated_v032 --dry-run
+python -m splendor_env.migrations.migrate_logs_v032 runs/old_logs --output-dir runs/migrated_v032 --recursive --verify
+```
+
 스플렌더 기본판을 강화학습 self-play에 사용할 수 있도록 만든 **독립 규칙 엔진 + PettingZoo AEC 환경**입니다.
 그림이나 상표 자산은 포함하지 않고 카드/귀족의 수치와 게임 규칙만 구현했습니다.
 
@@ -180,10 +196,12 @@ masked_logits = logits.masked_fill(action_mask == 0, -1e9)
 ## 관측 공간
 
 ```python
-Dict({
-    "observation": Box(0, 1, shape=(475,), dtype=float32),
-    "action_mask": MultiBinary(373),
-})
+Dict(
+    {
+        "observation": Box(0, 1, shape=(475,), dtype=float32),
+        "action_mask": MultiBinary(373),
+    }
+)
 ```
 
 475차원 벡터는 215차원 전역 보드 블록과 최대 4명의 65차원 플레이어 블록으로 구성됩니다. `OBS_LAYOUT`에 주요 slice가 정의되어 있습니다.

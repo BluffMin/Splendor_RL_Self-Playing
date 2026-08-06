@@ -92,7 +92,9 @@ class StateDelta:
         return asdict(self)
 
 
-def _resolve_perspective(perspective: Perspective, current_player: int) -> tuple[int, bool]:
+def _resolve_perspective(
+    perspective: Perspective, current_player: int
+) -> tuple[int, bool]:
     if perspective == "omniscient":
         return current_player, True
     if perspective == "current":
@@ -123,7 +125,9 @@ def _noble_view(noble: Noble) -> NobleView:
     return NobleView(noble.noble_id, noble.points, noble.requirements_by_color())
 
 
-def _pending_text(phase: str, payment_count: int, excess: int, player: int) -> str | None:
+def _pending_text(
+    phase: str, payment_count: int, excess: int, player: int
+) -> str | None:
     if phase == Phase.PAYMENT.value:
         return f"P{player} is choosing a payment plan · {payment_count} legal plans"
     if phase == Phase.DISCARD.value:
@@ -147,25 +151,35 @@ def board_view_from_game(
     market = tuple(
         _card_view(card, market_slot=tier * 4 + slot)
         if card is not None
-        else CardView(None, tier + 1, False, None, None, None, market_slot=tier * 4 + slot)
+        else CardView(
+            None, tier + 1, False, None, None, None, market_slot=tier * 4 + slot
+        )
         for tier in range(3)
         for slot, card in enumerate(game.visible[tier])
     )
-    rank_by_player = {
-        player: int(group["rank"])
-        for group in game.final_ranking()
-        for player in group["players"]
-    } if game.done else {}
+    rank_by_player = (
+        {
+            player: int(group["rank"])
+            for group in game.final_ranking()
+            for player in group["players"]
+        }
+        if game.done
+        else {}
+    )
     order = list(range(game.num_players))
     if layout == "egocentric":
-        order = [(viewer + offset) % game.num_players for offset in range(game.num_players)]
+        order = [
+            (viewer + offset) % game.num_players for offset in range(game.num_players)
+        ]
     players = []
     for player_id in order:
         player = game.players[player_id]
         reserved = tuple(
             _card_view(
                 reservation.card,
-                visible=game._reservation_visible(player_id, viewer, reservation, omniscient),
+                visible=game._reservation_visible(
+                    player_id, viewer, reservation, omniscient
+                ),
                 origin=reservation.origin,
             )
             for reservation in player.reserved
@@ -179,8 +193,14 @@ def board_view_from_game(
                 tokens=dict(zip(TOKEN_COLORS, map(int, player.tokens), strict=True)),
                 bonuses=dict(zip(GEM_COLORS, map(int, player.bonuses), strict=True)),
                 purchased_card_count=len(player.purchased),
-                purchased_cards_by_color={color: sum(c.bonus_color == color for c in player.purchased) for color in GEM_COLORS},
-                purchased_cards_by_tier={tier: sum(c.tier == tier - 1 for c in player.purchased) for tier in (1, 2, 3)},
+                purchased_cards_by_color={
+                    color: sum(c.bonus_color == color for c in player.purchased)
+                    for color in GEM_COLORS
+                },
+                purchased_cards_by_tier={
+                    tier: sum(c.tier == tier - 1 for c in player.purchased)
+                    for tier in (1, 2, 3)
+                },
                 purchased_cards=tuple(_card_view(card) for card in player.purchased),
                 reserved_cards=reserved,
                 nobles=tuple(_noble_view(noble) for noble in player.nobles),
@@ -205,7 +225,12 @@ def board_view_from_game(
         players=tuple(players),
         last_action_text=game.last_action_text,
         last_action_player=game.last_actor,
-        pending_choice_text=_pending_text(game.phase.value, len(game.pending_payment_plans), excess, game.current_player),
+        pending_choice_text=_pending_text(
+            game.phase.value,
+            len(game.pending_payment_plans),
+            excess,
+            game.current_player,
+        ),
         is_terminal=game.done,
         winner_ids=tuple(game.winner_ids()) if game.done else (),
     )
@@ -226,7 +251,9 @@ def board_view_from_snapshot(
     market = tuple(
         _card_view(CARD_BY_ID[card_id], market_slot=tier * 4 + slot)
         if card_id is not None
-        else CardView(None, tier + 1, False, None, None, None, market_slot=tier * 4 + slot)
+        else CardView(
+            None, tier + 1, False, None, None, None, market_slot=tier * 4 + slot
+        )
         for tier, row in enumerate(snapshot["visible"])
         for slot, card_id in enumerate(row)
     )
@@ -247,16 +274,26 @@ def board_view_from_snapshot(
             PlayerView(
                 player_id=player_id,
                 display_name=f"Player {player_id}",
-                is_current=player_id == current and not snapshot["terminated"] and not snapshot["truncated"],
+                is_current=player_id == current
+                and not snapshot["terminated"]
+                and not snapshot["truncated"],
                 score=int(player["score"]),
                 tokens=dict(zip(TOKEN_COLORS, player["tokens"], strict=True)),
                 bonuses=dict(zip(GEM_COLORS, player["bonuses"], strict=True)),
                 purchased_card_count=len(purchased),
-                purchased_cards_by_color={color: sum(c.bonus_color == color for c in purchased) for color in GEM_COLORS},
-                purchased_cards_by_tier={tier: sum(c.tier == tier - 1 for c in purchased) for tier in (1, 2, 3)},
+                purchased_cards_by_color={
+                    color: sum(c.bonus_color == color for c in purchased)
+                    for color in GEM_COLORS
+                },
+                purchased_cards_by_tier={
+                    tier: sum(c.tier == tier - 1 for c in purchased)
+                    for tier in (1, 2, 3)
+                },
                 purchased_cards=tuple(_card_view(card) for card in purchased),
                 reserved_cards=tuple(reserved),
-                nobles=tuple(_noble_view(NOBLE_BY_ID[noble_id]) for noble_id in player["nobles"]),
+                nobles=tuple(
+                    _noble_view(NOBLE_BY_ID[noble_id]) for noble_id in player["nobles"]
+                ),
             )
         )
     phase = str(snapshot["phase"])
@@ -274,17 +311,23 @@ def board_view_from_snapshot(
         bank_tokens=dict(zip(TOKEN_COLORS, snapshot["bank"], strict=True)),
         market_cards=market,
         deck_counts={tier + 1: len(snapshot["decks"][tier]) for tier in range(3)},
-        nobles=tuple(_noble_view(NOBLE_BY_ID[noble_id]) for noble_id in snapshot["nobles"]),
+        nobles=tuple(
+            _noble_view(NOBLE_BY_ID[noble_id]) for noble_id in snapshot["nobles"]
+        ),
         players=tuple(players),
         last_action_text=None,
         last_action_player=None,
-        pending_choice_text=_pending_text(phase, len(snapshot["pending_payment_plans"]), excess, current),
+        pending_choice_text=_pending_text(
+            phase, len(snapshot["pending_payment_plans"]), excess, current
+        ),
         is_terminal=bool(snapshot["terminated"] or snapshot["truncated"]),
         winner_ids=(),
     )
 
 
-def compute_state_delta(pre_snapshot: dict[str, Any], post_snapshot: dict[str, Any]) -> StateDelta:
+def compute_state_delta(
+    pre_snapshot: dict[str, Any], post_snapshot: dict[str, Any]
+) -> StateDelta:
     """Compute resource and holding changes between omniscient state dictionaries."""
     changed_slots = tuple(
         tier * 4 + slot
@@ -302,7 +345,9 @@ def compute_state_delta(pre_snapshot: dict[str, Any], post_snapshot: dict[str, A
     purchased: list[str] = []
     reserved: list[str] = []
     nobles: list[str] = []
-    for player_id, (before, after) in enumerate(zip(pre_snapshot["players"], post_snapshot["players"], strict=True)):
+    for player_id, (before, after) in enumerate(
+        zip(pre_snapshot["players"], post_snapshot["players"], strict=True)
+    ):
         changes = {
             color: int(after["tokens"][i]) - int(before["tokens"][i])
             for i, color in enumerate(TOKEN_COLORS)
@@ -314,6 +359,18 @@ def compute_state_delta(pre_snapshot: dict[str, Any], post_snapshot: dict[str, A
             score_changes[player_id] = int(after["score"]) - int(before["score"])
         purchased += [x for x in after["purchased"] if x not in before["purchased"]]
         before_reserved = {x["card_id"] for x in before["reserved"]}
-        reserved += [x["card_id"] for x in after["reserved"] if x["card_id"] not in before_reserved]
+        reserved += [
+            x["card_id"]
+            for x in after["reserved"]
+            if x["card_id"] not in before_reserved
+        ]
         nobles += [x for x in after["nobles"] if x not in before["nobles"]]
-    return StateDelta(changed_slots, token_changes, player_token_changes, score_changes, tuple(purchased), tuple(reserved), tuple(nobles))
+    return StateDelta(
+        changed_slots,
+        token_changes,
+        player_token_changes,
+        score_changes,
+        tuple(purchased),
+        tuple(reserved),
+        tuple(nobles),
+    )

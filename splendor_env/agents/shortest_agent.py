@@ -17,11 +17,19 @@ class ShortestAgent:
             return min(a for a in legal if a >= NOBLE_OFFSET)
         buys = [a for a in legal if ACTIONS[a].kind in {"buy_visible", "buy_reserved"}]
         if buys:
+
             def key(action: int) -> tuple[int, int, int]:
                 spec = ACTIONS[action]
-                card = game._visible_card(spec.payload) if spec.kind == "buy_visible" else game.players[game.current_player].reserved[spec.payload].card
+                card = (
+                    game._visible_card(spec.payload)
+                    if spec.kind == "buy_visible"
+                    else game.players[game.current_player].reserved[spec.payload].card
+                )
                 assert card is not None
                 return (sum(card.cost), -card.points, action)
+
             return min(buys, key=key)
-        takes = [a for a in legal if ACTIONS[a].kind in {"take_distinct", "take_double"}]
+        takes = [
+            a for a in legal if ACTIONS[a].kind in {"take_distinct", "take_double"}
+        ]
         return min(takes or legal)

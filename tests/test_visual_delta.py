@@ -14,7 +14,9 @@ def test_delta_detects_resources_and_holdings() -> None:
     after["players"][0]["tokens"][0] += 1
     after["players"][0]["score"] += 3
     after["players"][0]["purchased"].append("T1-WHITE-01")
-    after["players"][0]["reserved"].append({"card_id": "T2-BLUE-01", "origin": "visible"})
+    after["players"][0]["reserved"].append(
+        {"card_id": "T2-BLUE-01", "origin": "visible"}
+    )
     after["players"][0]["nobles"].append("N-01")
     after["visible"][0][0] = "CHANGED-CARD"
     delta = compute_state_delta(before, after)

@@ -1,0 +1,6 @@
+Legacy replay v0.3.1
+event N: choose payment plan 0
+turn counter=9
+current player=1
+actor=P0
+preceding buy-selection event unavailable
