@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "splendor-selfplay-env"
+version = "0.1.0"
+description = "A PettingZoo AEC environment and standalone rules engine for Splendor self-play reinforcement learning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Semin Heo project scaffold"}]
+dependencies = [
+  "numpy>=1.26",
+  "gymnasium>=1.0,<2",
+  "pettingzoo>=1.25,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+rl = ["torch>=2.4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["splendor_env*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
