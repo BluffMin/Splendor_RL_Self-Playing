@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Any, Literal
+from functools import cache
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from gymnasium import spaces
@@ -23,7 +23,7 @@ class raw_env(AECEnv):
     ``sparse`` (the default) emits only the final game result.
     """
 
-    metadata = {
+    metadata: ClassVar[dict[str, Any]] = {
         "render_modes": ["human", "ansi"],
         "name": "splendor_selfplay_v0",
         "is_parallelizable": False,
@@ -39,6 +39,7 @@ class raw_env(AECEnv):
         max_turns: int | None = None,
         allow_deadlock_pass: bool = False,
         render_mode: str | None = None,
+        render_omniscient: bool = False,
     ) -> None:
         super().__init__()
         if reward_mode not in ("sparse", "score"):
@@ -50,6 +51,7 @@ class raw_env(AECEnv):
         self.reward_mode = reward_mode
         self.shaping_scale = float(shaping_scale)
         self.render_mode = render_mode
+        self.render_omniscient = bool(render_omniscient)
         self.game = SplendorGame(
             num_players=num_players,
             max_turns=max_turns,
@@ -67,7 +69,7 @@ class raw_env(AECEnv):
             dtype=np.float32,
         )
 
-    @lru_cache(maxsize=None)
+    @cache  # noqa: B019 - spaces are immutable for the environment lifetime
     def observation_space(self, agent: str) -> spaces.Dict:
         del agent
         return spaces.Dict(
@@ -82,7 +84,7 @@ class raw_env(AECEnv):
             }
         )
 
-    @lru_cache(maxsize=None)
+    @cache  # noqa: B019 - spaces are immutable for the environment lifetime
     def action_space(self, agent: str) -> spaces.Discrete:
         del agent
         return spaces.Discrete(N_ACTIONS)
@@ -199,7 +201,12 @@ class raw_env(AECEnv):
         return info
 
     def render(self) -> str | None:
-        text = self.game.render()
+        if self.render_mode is None:
+            return None
+        text = self.game.render(
+            perspective=self.game.current_player,
+            omniscient=self.render_omniscient,
+        )
         if self.render_mode == "human":
             print(text)
             print("-" * 100)

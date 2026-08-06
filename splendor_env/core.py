@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Literal
+from typing import Literal
 
 import numpy as np
 
@@ -24,7 +25,12 @@ MAX_RESERVED = 3
 MAX_NOBLES = 5
 WINNING_SCORE = 15
 MAX_TOKENS = 10
-OBSERVATION_SIZE = 419
+GLOBAL_OBSERVATION_SIZE = 194
+PLAYER_PUBLIC_SIZE = 17
+RESERVED_SLOT_SIZE = 16
+PLAYER_BLOCK_SIZE = PLAYER_PUBLIC_SIZE + MAX_RESERVED * RESERVED_SLOT_SIZE
+OBSERVATION_SIZE = GLOBAL_OBSERVATION_SIZE + MAX_PLAYERS * PLAYER_BLOCK_SIZE
+assert OBSERVATION_SIZE == 454
 
 
 class InvalidActionError(ValueError):
@@ -482,7 +488,10 @@ class SplendorGame:
             raise ValueError("invalid perspective")
         values: list[float] = []
 
-        values.extend(float(self.phase == phase) for phase in ("normal", "payment", "discard", "noble"))
+        # Keep the established three phase features so the global board block
+        # remains 194 values. During payment all three entries are zero; the
+        # payment-only action mask unambiguously identifies that decision state.
+        values.extend(float(self.phase == phase) for phase in ("normal", "discard", "noble"))
         values.append(float(self.done))
         values.append(float(self.final_round_triggered))
         values.append(
@@ -515,7 +524,7 @@ class SplendorGame:
         ]
         for player_slot in range(MAX_PLAYERS):
             if player_slot >= self.num_players:
-                values.extend([0.0] * 56)
+                values.extend([0.0] * PLAYER_BLOCK_SIZE)
                 continue
             player_index = order[player_slot]
             player = self.players[player_index]
@@ -534,18 +543,21 @@ class SplendorGame:
 
             for reserved_slot in range(MAX_RESERVED):
                 if reserved_slot >= len(player.reserved):
-                    values.extend([0.0] * 13)
+                    values.extend([0.0] * RESERVED_SLOT_SIZE)
                     continue
                 reservation = player.reserved[reserved_slot]
                 hidden = reservation.hidden_to_opponents
                 can_see = omniscient or player_index == perspective or not hidden
+                tier = [0.0, 0.0, 0.0]
+                tier[reservation.card.tier] = 1.0
                 if can_see:
                     values.extend(
                         [1.0, float(hidden)]
+                        + tier
                         + self._encode_card(reservation.card)[1:]
                     )
                 else:
-                    values.extend([1.0, 1.0] + [0.0] * 11)
+                    values.extend([1.0, 1.0] + tier + [0.0] * 11)
 
         observation = np.asarray(values, dtype=np.float32)
         if observation.shape != (OBSERVATION_SIZE,):
@@ -578,7 +590,17 @@ class SplendorGame:
         """Omniscient global state for centralized critics."""
         return self.observation(0, omniscient=True)
 
-    def render(self) -> str:
+    def render(
+        self,
+        perspective: int | None = None,
+        *,
+        omniscient: bool = False,
+    ) -> str:
+        if perspective is None:
+            perspective = self.current_player
+        if not 0 <= perspective < self.num_players:
+            raise ValueError("invalid perspective")
+
         def card_text(card: Card | None) -> str:
             if card is None:
                 return "[empty]"
@@ -586,8 +608,12 @@ class SplendorGame:
             cost = "/".join(str(x) for x in card.cost)
             return f"{bonus}+ {card.points}pt ({cost})"
 
+        header = (
+            f"Splendor | view=P{perspective} | phase={self.phase} | "
+            f"player={self.current_player} | turns={self.turns_completed}"
+        )
         lines = [
-            f"Splendor | phase={self.phase} | player={self.current_player} | turns={self.turns_completed}",
+            header,
             "Bank  " + " ".join(f"{name}:{int(self.bank[i])}" for i, name in enumerate(TOKEN_COLORS)),
         ]
         for tier in reversed(range(3)):
@@ -600,11 +626,32 @@ class SplendorGame:
             + " | ".join("/".join(str(x) for x in noble.cost) for noble in self.nobles)
         )
         for i, player in enumerate(self.players):
+            current = " <- current" if i == self.current_player else ""
             lines.append(
-                f"P{i}: score={player.score}, cards={len(player.purchased)}, "
+                f"P{i}{current}: score={player.score}, cards={len(player.purchased)}, "
                 f"bonuses={player.bonuses.tolist()}, tokens={player.tokens.tolist()}, "
                 f"reserved={len(player.reserved)}, nobles={len(player.nobles)}"
             )
+            if not player.reserved:
+                lines.append("  reserved: (none)")
+                continue
+            for reservation in player.reserved:
+                can_see = (
+                    omniscient
+                    or i == perspective
+                    or not reservation.hidden_to_opponents
+                )
+                if not can_see:
+                    lines.append(
+                        f"  reserved: [Tier {reservation.card.tier + 1} hidden card]"
+                    )
+                    continue
+                source = (
+                    "deck-private"
+                    if reservation.hidden_to_opponents
+                    else "visible-public"
+                )
+                lines.append(f"  reserved: [{source}] {card_text(reservation.card)}")
         if self.done:
             lines.append(
                 f"END reason={self.end_reason}, winners={self.winners()}, rewards={self.terminal_rewards().tolist()}"

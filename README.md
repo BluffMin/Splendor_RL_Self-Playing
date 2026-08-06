@@ -18,9 +18,9 @@
 - 여러 귀족을 동시에 만족할 때 에이전트가 직접 하나 선택
 - 15점 도달 후 현재 라운드를 끝까지 진행
 - 동점 시 구매한 개발 카드가 더 적은 플레이어 우선
-- 부분 관측: 상대가 덱에서 비공개 예약한 카드 내용은 가림
+- 부분 관측: 공개 시장 예약 카드는 모두에게 공개하고, 덱 예약 카드는 상대에게 티어만 공개
 - 중앙집중식 critic용 `state()` 제공
-- 고정 `Discrete(72)` 행동 공간과 `action_mask`
+- 고정 `Discrete(324)` 행동 공간과 `action_mask`
 - sparse terminal reward 또는 zero-sum score shaping
 - ANSI/human 텍스트 렌더링
 
@@ -42,6 +42,7 @@ pytest
 
 ```bash
 python examples/random_self_play.py
+python examples/reservation_visibility_demo.py
 ```
 
 직접 코드에서 사용할 때:
@@ -78,12 +79,13 @@ PettingZoo의 AEC 루프에서는 보상이 해당 에이전트의 **다음 `las
 스플렌더는 한 턴 안에서도 토큰 반납 또는 귀족 선택이라는 추가 의사결정이 생깁니다. 이 구현은 그 선택을 자동 처리하지 않고 같은 에이전트가 연속해서 행동하게 합니다.
 
 - `normal`: 일반 행동
+- `payment`: 구매 시 색 토큰과 골드의 지불 조합 선택
 - `discard`: 토큰 하나씩 반납
 - `noble`: 만족한 귀족 중 하나 선택
 
 이 때문에 동시 행동용 Parallel API가 아니라 턴 순서를 정확히 표현하는 AEC API를 사용합니다.
 
-## 행동 공간: 72개
+## 행동 공간: 324개
 
 | 범위 | 행동 |
 |---:|---|
@@ -96,8 +98,9 @@ PettingZoo의 AEC 루프에서는 보상이 해당 에이전트의 **다음 `las
 | 60–65 | 토큰 하나 반납 |
 | 66–70 | 귀족 선택 |
 | 71 | 공식 행동이 하나도 없을 때만 가능한 deadlock pass |
+| 72–323 | 카드 구매 시 골드 대체 지불 조합 선택 |
 
-정책은 72개 로짓을 출력하고, `action_mask == 0`인 로짓을 매우 작은 값으로 바꾼 뒤 categorical sampling 또는 argmax를 수행하면 됩니다.
+정책은 324개 로짓을 출력하고, `action_mask == 0`인 로짓을 매우 작은 값으로 바꾼 뒤 categorical sampling 또는 argmax를 수행하면 됩니다.
 
 ```python
 masked_logits = logits.masked_fill(action_mask == 0, -1e9)
@@ -107,22 +110,33 @@ masked_logits = logits.masked_fill(action_mask == 0, -1e9)
 
 ```python
 Dict({
-    "observation": Box(0, 1, shape=(418,), dtype=float32),
-    "action_mask": MultiBinary(72),
+    "observation": Box(0, 1, shape=(454,), dtype=float32),
+    "action_mask": MultiBinary(324),
 })
 ```
 
-418차원 벡터에는 다음이 포함됩니다.
+454차원 벡터는 194차원 전역 보드 블록과 최대 4명의 65차원 플레이어 블록으로 구성됩니다.
 
 - 현재 phase, 종료 여부, final round 여부, 진행률
 - 은행 토큰과 티어별 남은 덱 크기
 - 공개 카드 12장
 - 귀족 최대 5개
 - 최대 4명의 토큰, 영구 보너스, 점수, 구매 카드 수, 귀족 수
-- 각 플레이어 예약 카드 최대 3장
-- 상대의 비공개 예약 카드는 존재 여부만 표시
+- 각 플레이어 예약 카드 최대 3장: 존재 여부, 예약 출처, 티어, 카드 payload
+- 공개 시장에서 예약한 카드는 모든 플레이어에게 전체 정보 공개
+- 덱에서 예약한 카드는 소유자에게 전체 정보, 상대에게 존재·비공개 출처·티어만 공개
 
-`game.unwrapped.state()`는 비공개 예약까지 포함하는 동일 크기의 omniscient state를 반환합니다.
+`game.unwrapped.state()`는 모든 비공개 예약의 payload까지 포함하는 454차원 omniscient state를 반환합니다.
+
+텍스트 렌더링도 같은 공개 규칙을 따릅니다. PettingZoo 환경에서 전체 카드를 확인하는 디버그 렌더링이 필요하면 `render_omniscient=True`를 지정합니다.
+
+```python
+game = env(
+    num_players=3,
+    render_mode="human",
+    render_omniscient=True,
+)
+```
 
 ## 보상
 
@@ -150,9 +164,10 @@ prestige를 얻을 때 행동한 플레이어에게 `shaping_scale × 획득 점
 
 - `splendor_env/core.py`: 외부 RL 라이브러리와 독립적인 규칙 엔진
 - `splendor_env/pettingzoo_env.py`: PettingZoo AEC 어댑터
-- `splendor_env/actions.py`: 72개 행동 정의 및 설명
+- `splendor_env/actions.py`: 324개 행동 정의 및 설명
 - `splendor_env/data.py`: 90장 카드와 10개 귀족 수치
 - `examples/random_self_play.py`: 합법 행동 마스크를 이용한 실행 예제
+- `examples/reservation_visibility_demo.py`: 관점별 예약 카드 공개 범위 예제
 - `tests/test_core.py`: 보존 법칙 및 랜덤 롤아웃 테스트
 
 ## 주의

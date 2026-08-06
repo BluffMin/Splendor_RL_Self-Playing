@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "splendor-selfplay-env"
-version = "0.1.0"
+version = "0.2.0"
 description = "A PettingZoo AEC environment and standalone rules engine for Splendor self-play reinforcement learning"
 readme = "README.md"
 requires-python = ">=3.10"

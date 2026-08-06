@@ -4,7 +4,15 @@ import numpy as np
 import pytest
 
 from splendor_env.actions import PAYMENT_OFFSET, action_id
-from splendor_env.core import MAX_TOKENS, OBSERVATION_SIZE, SplendorGame
+from splendor_env.core import (
+    GLOBAL_OBSERVATION_SIZE,
+    MAX_TOKENS,
+    OBSERVATION_SIZE,
+    PLAYER_BLOCK_SIZE,
+    PLAYER_PUBLIC_SIZE,
+    RESERVED_SLOT_SIZE,
+    SplendorGame,
+)
 from splendor_env.data import CARDS, NOBLES
 
 
@@ -22,8 +30,12 @@ def test_setup(num_players: int, colored: int) -> None:
     assert game.bank.tolist() == [colored] * 5 + [5]
     assert [len(deck) for deck in game.decks] == [36, 26, 16]
     assert len(game.nobles) == num_players + 1
-    assert game.observation(0).shape == (OBSERVATION_SIZE,)
-    assert game.state().shape == (OBSERVATION_SIZE,)
+    assert OBSERVATION_SIZE == 454
+    for perspective in range(num_players):
+        assert game.observation(perspective).shape == (454,)
+    assert game.state().shape == (454,)
+    unused_start = GLOBAL_OBSERVATION_SIZE + num_players * PLAYER_BLOCK_SIZE
+    assert np.count_nonzero(game.observation(0)[unused_start:]) == 0
 
 
 def test_forced_discard_is_agent_decision() -> None:
@@ -118,12 +130,62 @@ def test_hidden_reservation_is_masked_from_opponent() -> None:
 
     own = game.observation(0)
     opponent = game.observation(1)
-    # Payment phase adds one global feature; player blocks begin at index 195.
-    own_reserved_start = 195 + 17
-    opponent_view_of_p0_start = 195 + 56 + 17
+    own_reserved_start = GLOBAL_OBSERVATION_SIZE + PLAYER_PUBLIC_SIZE
+    opponent_view_of_p0_start = (
+        GLOBAL_OBSERVATION_SIZE + PLAYER_BLOCK_SIZE + PLAYER_PUBLIC_SIZE
+    )
     assert own[own_reserved_start] == 1.0
     assert own[own_reserved_start + 1] == 1.0
-    assert own[own_reserved_start + 2 : own_reserved_start + 13].sum() > 0
+    assert own[own_reserved_start + 2 : own_reserved_start + 5].tolist() == [1, 0, 0]
+    assert own[own_reserved_start + 5 : own_reserved_start + RESERVED_SLOT_SIZE].sum() > 0
     assert opponent[opponent_view_of_p0_start] == 1.0
     assert opponent[opponent_view_of_p0_start + 1] == 1.0
-    assert opponent[opponent_view_of_p0_start + 2 : opponent_view_of_p0_start + 13].sum() == 0
+    assert opponent[
+        opponent_view_of_p0_start + 2 : opponent_view_of_p0_start + 5
+    ].tolist() == [1, 0, 0]
+    assert opponent[
+        opponent_view_of_p0_start + 5 : opponent_view_of_p0_start + RESERVED_SLOT_SIZE
+    ].sum() == 0
+    state = game.state()
+    np.testing.assert_array_equal(
+        state[own_reserved_start + 5 : own_reserved_start + RESERVED_SLOT_SIZE],
+        own[own_reserved_start + 5 : own_reserved_start + RESERVED_SLOT_SIZE],
+    )
+
+
+def test_visible_reservation_is_public_to_opponent() -> None:
+    game = SplendorGame(num_players=2, seed=4)
+    reserved_card = game.visible[0][0]
+    assert reserved_card is not None
+    game.step(action_id("reserve_visible", 0))
+
+    opponent = game.observation(1)
+    start = GLOBAL_OBSERVATION_SIZE + PLAYER_BLOCK_SIZE + PLAYER_PUBLIC_SIZE
+    assert opponent[start] == 1.0
+    assert opponent[start + 1] == 0.0
+    assert opponent[start + 2 : start + 5].tolist() == [1, 0, 0]
+    expected_payload = np.asarray(game._encode_card(reserved_card)[1:], dtype=np.float32)
+    np.testing.assert_array_equal(
+        opponent[start + 5 : start + RESERVED_SLOT_SIZE], expected_payload
+    )
+
+    rendered = game.render(perspective=1)
+    assert "[visible-public]" in rendered
+    assert "Tier 1 hidden card" not in rendered
+
+
+def test_private_reservation_rendering_is_perspective_aware() -> None:
+    game = SplendorGame(num_players=2, seed=5)
+    game.step(action_id("reserve_deck", 1))
+
+    assert "[Tier 2 hidden card]" in game.render(perspective=1)
+    assert "[deck-private]" in game.render(perspective=0)
+    omniscient = game.render(perspective=1, omniscient=True)
+    assert "[deck-private]" in omniscient
+    assert "[Tier 2 hidden card]" not in omniscient
+
+
+def test_render_rejects_invalid_perspective() -> None:
+    game = SplendorGame(num_players=2, seed=6)
+    with pytest.raises(ValueError):
+        game.render(perspective=2)

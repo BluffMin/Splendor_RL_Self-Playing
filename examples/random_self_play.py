@@ -18,7 +18,7 @@ def main() -> None:
 
     final_rewards = {}
     for agent in game.agent_iter(max_iter=5000):
-        observation, reward, terminated, truncated, info = game.last()
+        observation, reward, terminated, truncated, _info = game.last()
         final_rewards[agent] = reward
 
         if terminated or truncated:
