@@ -8,6 +8,7 @@
 - Added absolute `--stop-at-transitions` staged runs without shortening schedules.
 - Added resume-aware progress and progress-safe checkpoint/evaluation messages.
 - Converted no-official-action collector deadlocks into recorded safety truncations.
+- Fixed CUDA resume by restoring CPU/CUDA RNG states from CPU ByteTensors.
 
 ## v0.4.2 - First-class two-player self-play support
 

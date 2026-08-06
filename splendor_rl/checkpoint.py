@@ -8,6 +8,13 @@ import numpy as np
 import torch
 
 
+def _cpu_byte_rng_state(state):
+    """Normalize RNG tensors after a checkpoint-wide CUDA map_location."""
+    if not isinstance(state, torch.Tensor):
+        state = torch.as_tensor(state)
+    return state.detach().to(device="cpu", dtype=torch.uint8).contiguous()
+
+
 def save_checkpoint(
     path,
     actor,
@@ -24,9 +31,9 @@ def save_checkpoint(
     target.parent.mkdir(parents=True, exist_ok=True)
     current_lr = float(optimizer.param_groups[0]["lr"])
     payload = {
-        "schema_version": "0.4.2",
+        "schema_version": "0.4.3",
         "engine_version": "0.3.2",
-        "rl_version": "0.4.2",
+        "rl_version": "0.4.3",
         "num_players": config.num_players,
         "max_players_in_observation": 4,
         "training_mode": "shared_parameter_self_play",
@@ -76,7 +83,7 @@ def load_checkpoint(
 ):
     data = torch.load(path, map_location=map_location, weights_only=False)
     version = data.get("schema_version")
-    if version not in {"0.4.0", "0.4.1", "0.4.2"}:
+    if version not in {"0.4.0", "0.4.1", "0.4.2", "0.4.3"}:
         raise ValueError("unsupported checkpoint schema")
     config_players = data.get("config", {}).get("num_players")
     top_players = data.get("num_players", config_players)
@@ -120,7 +127,14 @@ def load_checkpoint(
     if restore_rng:
         random.setstate(data["rng_states"]["python"])
         np.random.set_state(data["rng_states"]["numpy"])
-        torch.set_rng_state(data["rng_states"]["torch_cpu"])
+        # map_location=device also maps this CPU RNG tensor to CUDA. PyTorch's
+        # CPU generator strictly requires a CPU ByteTensor.
+        torch.set_rng_state(_cpu_byte_rng_state(data["rng_states"]["torch_cpu"]))
         if torch.cuda.is_available() and data["rng_states"]["torch_cuda"]:
-            torch.cuda.set_rng_state_all(data["rng_states"]["torch_cuda"])
+            torch.cuda.set_rng_state_all(
+                [
+                    _cpu_byte_rng_state(state)
+                    for state in data["rng_states"]["torch_cuda"]
+                ]
+            )
     return data
