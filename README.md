@@ -1,5 +1,24 @@
 # Splendor Self-Play Environment
 
+## Shared PPO v0.4.0
+
+Install the optional learner and run the pipeline smoke test:
+
+```powershell
+pip install -e ".[rl]"
+python experiments/train_shared_ppo.py --config configs/shared_ppo_smoke.yaml --run-dir runs/shared_ppo_smoke
+```
+
+Four-player self-play and fixed-bot evaluation:
+
+```powershell
+python experiments/train_shared_ppo.py --config configs/shared_ppo_4p.yaml --run-dir runs/shared_ppo_seed42
+python experiments/evaluate_shared_ppo.py --checkpoint runs/shared_ppo_seed42/checkpoints/latest.pt --games-per-matchup 500 --output-dir runs/shared_ppo_seed42/final_evaluation
+python experiments/watch_checkpoint_game.py --checkpoint runs/shared_ppo_seed42/checkpoints/latest.pt --players 4 --opponents greedy shortest blocking --seed 123 --perspective omniscient --manual --step-mode turn
+```
+
+See [Shared PPO](docs/shared_ppo.md), [player trajectories](docs/player_trajectory.md), and the [CTDE critic](docs/ctde_critic.md). Smoke updates validate the pipeline only; they do not demonstrate strong play.
+
 ## v0.3.2 turn-aware replay
 
 ```powershell

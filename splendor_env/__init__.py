@@ -20,7 +20,7 @@ from .core import (
     enumerate_legal_payment_plans,
 )
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 __all__ = [
     "ACTIONS",

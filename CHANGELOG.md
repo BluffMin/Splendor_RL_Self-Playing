@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.0 - Shared-parameter PPO self-play baseline
+
+- Shared actor across all players and seats with a separate CTDE critic.
+- Egocentric actor observations and legal-action masked categorical policy.
+- Canonical payment wrapper over the exact engine.
+- Constant-sum terminal rank rewards and player-specific trajectories.
+- Variable-discount GAE, PPO checkpoints/resume, and fixed-bot evaluation.
+- v0.3.2-native evaluation replay export.
+
 ## v0.3.2 - Correct player-turn semantics and legacy-log migration
 
 - Separated decision, player turn, and round counters.
