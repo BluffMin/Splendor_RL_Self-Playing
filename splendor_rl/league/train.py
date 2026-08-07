@@ -542,7 +542,14 @@ def train_league(
                     actor_obs_size=sizes["actor"],
                     action_size=sizes["action"],
                 )
-                pool.trim_recent(config.max_recent_snapshots)
+                pool.trim_recent(
+                    config.max_recent_snapshots,
+                    protected_ids={
+                        assignment.opponent_id
+                        for assignment in collector.env_assignments
+                        if assignment.opponent_id is not None
+                    },
+                )
                 while transitions >= next_snapshot:
                     next_snapshot += config.recent_snapshot_interval
             promotion = None

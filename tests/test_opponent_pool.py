@@ -38,3 +38,18 @@ def test_pool_archive_cap_atomic_index_and_validation(tmp_path):
     (tmp_path / pool.metadata["recent_2"].file_name).unlink()
     with pytest.raises(FileNotFoundError, match="missing"):
         pool.load("recent_2")
+
+
+def test_trim_recent_preserves_active_assignment(tmp_path):
+    actor, _ = models()
+    pool = OpponentPool(tmp_path, [8])
+    add(pool, actor, "recent_1", transition=1)
+    add(pool, actor, "recent_2", transition=2)
+    add(pool, actor, "recent_3", transition=3)
+
+    pool.trim_recent(1, protected_ids={"recent_1"})
+
+    assert "recent_1" in pool.metadata
+    assert "recent_3" in pool.metadata
+    assert "recent_2" not in pool.metadata
+    assert pool.load("recent_1").metadata.opponent_id == "recent_1"

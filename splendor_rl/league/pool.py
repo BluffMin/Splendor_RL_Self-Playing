@@ -173,12 +173,20 @@ class OpponentPool:
         self.loaded.pop(opponent_id, None)
         self._save_index()
 
-    def trim_recent(self, maximum):
+    def trim_recent(self, maximum, *, protected_ids=()):
+        protected = set(protected_ids)
         recent = sorted(
-            (item for item in self.metadata.values() if item.source_type == "recent"),
+            (
+                item
+                for item in self.metadata.values()
+                if item.source_type == "recent" and item.opponent_id not in protected
+            ),
             key=lambda item: item.created_transition,
         )
-        for item in recent[:-maximum] if maximum else recent:
+        # Protected snapshots are an intentional temporary overflow: they are
+        # removed by a later trim after their in-flight games finish.
+        removable_count = max(0, len(recent) - maximum)
+        for item in recent[:removable_count]:
             self.remove(item.opponent_id)
 
     def load(self, opponent_id):
