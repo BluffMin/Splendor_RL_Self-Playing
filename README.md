@@ -1,5 +1,9 @@
 # Splendor Self-Play Environment
 
+## Population league v0.6.0
+
+The repository now supports PPO-based population league self-play with independent Main and Exploiter learners, a sequential single-GPU scheduler, and a PSRO-lite empirical meta-strategy. It bootstraps the completed v0.5 league without continuing its exhausted optimizer or learning-rate schedule. See [Population league](docs/population_league.md).
+
 ## Empirical league bootstrap v0.5.1
 
 Multiple unique shared-PPO checkpoints can now seed a diverse league. Champion promotion treats Greedy, Noble, and Blocking as hard anchors and Random and Shortest as saturated non-regression anchors. See [the bootstrap guide](docs/league_bootstrap.md).

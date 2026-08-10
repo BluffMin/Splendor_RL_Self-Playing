@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.0 - Population League, Exploiters, and PSRO-lite
+
+- Added five independent sequential PPO learners: Main, two Main Exploiters, and two League Exploiters.
+- Added archived exploiters, empirical meta-game matrices, regret-matching PSRO-lite, diverse population sampling, and robust Champion gates.
+- Added empirical exploitability proxy, cycle diagnostics, and population checkpoint/resume.
+- Preserved the v0.4 shared-PPO and v0.5 league modes.
+
 ## v0.5.1 - Empirical league bootstrap and robust Champion selection
 
 - Added tournament-based bootstrap Champion selection and a diverse initial population.
