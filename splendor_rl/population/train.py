@@ -112,6 +112,75 @@ def _replace_snapshot(pool, actor, opponent_id, source_type, transition, config,
     )
 
 
+def _add_snapshot_idempotent(
+    pool, actor, opponent_id, source_type, transition, config, sizes
+):
+    """Finish a snapshot write safely after a crash before state commit.
+
+    The pool index can be one orchestration boundary ahead of population_state.json.
+    A deterministic resume therefore sees the same ID and actor hash again.
+    """
+    if opponent_id in pool.metadata:
+        expected = actor_sha256(actor)
+        existing = pool.metadata[opponent_id]
+        if existing.sha256 != expected or existing.created_transition != transition:
+            raise ValueError(
+                f"snapshot ID collision with different actor/state: {opponent_id}"
+            )
+        pool.load(opponent_id)  # Also validates the persisted file and checksum.
+        return existing
+    return pool.add_snapshot(
+        actor,
+        opponent_id=opponent_id,
+        source_type=source_type,
+        created_transition=transition,
+        champion_version=None,
+        training_seed=config.seed,
+        actor_obs_size=sizes["actor"],
+        action_size=sizes["action"],
+    )
+
+
+def _reconcile_pool_to_committed_state(pool, learners, transition, config, sizes):
+    """Roll back pool writes that happened after the last atomic state commit."""
+    removed = []
+    for opponent_id, metadata in list(pool.metadata.items()):
+        if metadata.created_transition <= transition:
+            continue
+        population_owned = opponent_id.startswith(("recent_main_", "active_")) or (
+            "_exploiter_" in opponent_id
+        )
+        if population_owned:
+            path = pool.root / metadata.file_name
+            if path.exists():
+                path.unlink()
+            pool.metadata.pop(opponent_id)
+            pool.loaded.pop(opponent_id, None)
+            removed.append(opponent_id)
+    if removed:
+        pool._save_index()
+    _replace_snapshot(
+        pool,
+        learners["main"].actor,
+        "current_main_snapshot",
+        "recent_main",
+        transition,
+        config,
+        sizes,
+    )
+    for role in ROLES[1:]:
+        _replace_snapshot(
+            pool,
+            learners[role].actor,
+            f"active_{role}",
+            "active_exploiter",
+            transition,
+            config,
+            sizes,
+        )
+    return removed
+
+
 def _scores_for(ids, records):
     scores = np.asarray([records.score(item) for item in ids], dtype=float)
     weights = 0.05 + 4 * scores * (1 - scores)
@@ -693,6 +762,18 @@ def train_population(
             "sizes": sizes,
             "population_transition": transition,
         }
+        recovered_pool_entries = _reconcile_pool_to_committed_state(
+            pool, learners, transition, config, sizes
+        )
+        if recovered_pool_entries:
+            _atomic_json(
+                run / "recovery_report.json",
+                {
+                    "schema_version": "0.6.0",
+                    "committed_population_transition": transition,
+                    "removed_uncommitted_pool_entries": recovered_pool_entries,
+                },
+            )
     else:
         if not bootstrap_run_dir:
             raise ValueError("--bootstrap-run-dir is required for a new population run")
@@ -874,15 +955,14 @@ def train_population(
                 sizes,
             )
         if transition >= thresholds["next_recent"]:
-            pool.add_snapshot(
+            _add_snapshot_idempotent(
+                pool,
                 learners["main"].actor,
-                opponent_id=f"recent_main_{transition:09d}",
-                source_type="recent",
-                created_transition=transition,
-                champion_version=None,
-                training_seed=config.seed,
-                actor_obs_size=sizes["actor"],
-                action_size=sizes["action"],
+                f"recent_main_{transition:09d}",
+                "recent",
+                transition,
+                config,
+                sizes,
             )
             while transition >= thresholds["next_recent"]:
                 thresholds["next_recent"] += config.recent_snapshot_interval
