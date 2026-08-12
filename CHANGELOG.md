@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Reuse population meta-game pair evaluations by immutable actor hash, including
+  deterministic recovery of legacy results at the exact replayed boundary.
+- Treat meta-mixture and League Exploiter pair counts as fixed total evaluation
+  budgets instead of multiplying them by the number of policies in the pool.
+
 ## v0.6.0 - Population League, Exploiters, and PSRO-lite
 
 - Added five independent sequential PPO learners: Main, two Main Exploiters, and two League Exploiters.

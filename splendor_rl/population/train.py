@@ -288,12 +288,26 @@ def _population_ids(pool, champion_id, maximum):
 def _meta_update(run, pool, champion_id, config, transition, device):
     ids = _population_ids(pool, champion_id, config.meta_max_policies)
     actors = {key: pool.load(key) for key in ids}
+    hashes = {key: pool.metadata[key].sha256 for key in ids}
     matrix = np.full((len(ids), len(ids)), 0.5)
     games = np.zeros_like(matrix, dtype=int)
     errors = np.zeros_like(matrix)
+    cache = _load_meta_pair_cache(run, pool, replay_transition=transition)
+    reused_pairs = evaluated_pairs = 0
     pair_count = max(1, config.meta_matchup_games_per_pair // 2)
     for row in range(len(ids)):
         for col in range(row + 1, len(ids)):
+            cache_key = tuple(sorted((hashes[ids[row]], hashes[ids[col]])))
+            cached = cache.get(cache_key)
+            if cached is not None:
+                score = cached["score"]
+                if hashes[ids[row]] != cache_key[0]:
+                    score = 1.0 - score
+                matrix[row, col], matrix[col, row] = score, 1.0 - score
+                games[row, col] = games[col, row] = cached["games"]
+                errors[row, col] = errors[col, row] = cached["standard_error"]
+                reused_pairs += 1
+                continue
             result = paired_actor_evaluation(
                 actors[ids[row]],
                 actors[ids[col]],
@@ -314,6 +328,7 @@ def _meta_update(run, pool, champion_id, config, transition, device):
                 if len(values) > 1
                 else 0.5
             )
+            evaluated_pairs += 1
     solver_matrix = antisymmetrize_score_matrix(matrix)
     solved = solve_symmetric_meta_strategy(
         solver_matrix,
@@ -336,10 +351,13 @@ def _meta_update(run, pool, champion_id, config, transition, device):
         "schema_version": "0.6.0",
         "population_transition": transition,
         "policy_ids": ids,
+        "policy_hashes": hashes,
         "raw_score_matrix": matrix.tolist(),
         "solver_payoff_matrix": solver_matrix.tolist(),
         "games": games.tolist(),
         "standard_errors": errors.tolist(),
+        "reused_pairs": reused_pairs,
+        "evaluated_pairs": evaluated_pairs,
         **solved.to_dict(),
         "non_transitive_cycles": cycles,
     }
@@ -363,19 +381,71 @@ def _meta_update(run, pool, champion_id, config, transition, device):
     }
 
 
+def _load_meta_pair_cache(run, pool, replay_transition=None):
+    cache = {}
+    for path in sorted((run / "meta").glob("step_*/meta_strategy.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            ids = payload["policy_ids"]
+            hashes = payload.get("policy_hashes", {})
+            same_replayed_boundary = (
+                replay_transition is not None
+                and int(payload.get("population_transition", -1))
+                == replay_transition
+            )
+            for row in range(len(ids)):
+                for col in range(row + 1, len(ids)):
+                    left, right = ids[row], ids[col]
+                    left_hash = hashes.get(left)
+                    right_hash = hashes.get(right)
+                    # Immutable snapshot IDs are stable. Active IDs are safe only
+                    # when deterministically replaying the exact committed boundary.
+                    if (
+                        not left_hash
+                        and (same_replayed_boundary or not left.startswith("active_"))
+                        and left in pool.metadata
+                    ):
+                        left_hash = pool.metadata[left].sha256
+                    if (
+                        not right_hash
+                        and (same_replayed_boundary or not right.startswith("active_"))
+                        and right in pool.metadata
+                    ):
+                        right_hash = pool.metadata[right].sha256
+                    if not left_hash or not right_hash:
+                        continue
+                    key = tuple(sorted((left_hash, right_hash)))
+                    score = float(payload["raw_score_matrix"][row][col])
+                    if left_hash != key[0]:
+                        score = 1.0 - score
+                    cache[key] = {
+                        "score": score,
+                        "games": int(payload["games"][row][col]),
+                        "standard_error": float(payload["standard_errors"][row][col]),
+                    }
+        except (KeyError, ValueError, json.JSONDecodeError):
+            continue
+    return cache
+
+
 def _mixture_score(actor, pool, meta, pair_count, seed):
+    rng = np.random.default_rng(seed)
+    probabilities = np.asarray(meta["probabilities"], dtype=float)
+    probabilities /= probabilities.sum()
     scores = []
-    for index, (opponent_id, probability) in enumerate(
-        zip(meta["policy_ids"], meta["probabilities"], strict=True)
-    ):
+    sampled = rng.choice(
+        len(meta["policy_ids"]), size=max(1, pair_count), p=probabilities
+    )
+    for index, opponent_index in enumerate(sampled):
+        opponent_id = meta["policy_ids"][int(opponent_index)]
         result = paired_actor_evaluation(
             actor,
             pool.load(opponent_id),
-            pair_count=max(1, pair_count),
-            seed_base=seed + index * 1000,
+            pair_count=1,
+            seed_base=seed + index,
         )
-        scores.append(float(np.mean(result["pair_scores"])) * probability)
-    return float(sum(scores))
+        scores.append(float(result["pair_scores"][0]))
+    return float(np.mean(scores))
 
 
 def _archive_or_respawn(
@@ -403,21 +473,24 @@ def _archive_or_respawn(
         )
         scores = result["pair_scores"]
     else:
-        component = []
-        for index, opponent_id in enumerate(meta["policy_ids"]):
+        mixture_seed = config.seed + 41_000_000 + population_transition
+        rng = np.random.default_rng(mixture_seed + learner.generation)
+        probabilities = np.asarray(meta["probabilities"], dtype=float)
+        probabilities /= probabilities.sum()
+        sampled = rng.choice(
+            len(meta["policy_ids"]),
+            size=config.exploiter_pair_count,
+            p=probabilities,
+        )
+        scores = []
+        for index, opponent_index in enumerate(sampled):
             evaluated = paired_actor_evaluation(
                 frozen,
-                pool.load(opponent_id),
-                pair_count=config.exploiter_pair_count,
-                seed_base=config.seed
-                + 41_000_000
-                + population_transition
-                + index * 1000,
+                pool.load(meta["policy_ids"][int(opponent_index)]),
+                pair_count=1,
+                seed_base=mixture_seed + index,
             )
-            component.append(
-                np.asarray(evaluated["pair_scores"]) * meta["probabilities"][index]
-            )
-        scores = np.sum(np.stack(component), axis=0).tolist()
+            scores.append(float(evaluated["pair_scores"][0]))
     ci = bootstrap_confidence_interval(
         scores,
         samples=config.exploiter_bootstrap_samples,
@@ -580,7 +653,7 @@ def _promotion(
         pool,
         meta,
         config.main_promotion_pair_count,
-        config.seed + 54_000_000 + population_transition,
+        config.seed + 53_000_000 + population_transition,
     )
     meta_delta = candidate_meta - champion_meta
     meta_pass = meta_delta >= config.main_promotion_min_meta_delta
