@@ -1,7 +1,17 @@
 # Changelog
 
-## Unreleased
+## v0.6.1 - High-Throughput Population Training
 
+- Added Windows-spawn multiprocess environment collection with centralized,
+  policy-wise batched actor and critic inference.
+- Added bounded frozen-actor caching, profiling, throughput metrics, collector
+  benchmarking, clean worker shutdown, and explicit worker failure propagation.
+- Added backward-compatible v0.6.0 state migration while preserving optimizers,
+  schedules, learner counters, population state, and the 50M horizon.
+- Moved exploiter gates to learner-local cadence and reduced training-time meta
+  and promotion evaluation cadence in the fast preset.
+- Reduced full tensor checkpoints from every PPO update to an authoritative 1M
+  cadence, with diagnostic-only lightweight state at 250k.
 - Reuse population meta-game pair evaluations by immutable actor hash, including
   deterministic recovery of legacy results at the exact replayed boundary.
 - Treat meta-mixture and League Exploiter pair counts as fixed total evaluation

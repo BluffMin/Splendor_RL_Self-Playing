@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import hashlib
 import json
 import random
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from splendor_rl.league.promotion import (
 from splendor_rl.league.records import MatchRecords
 from splendor_rl.metrics import JsonlMetrics
 from splendor_rl.ppo import ppo_update
+from splendor_rl.profiling import WallProfiler
 from splendor_rl.progress import ProgressConfig, make_training_progress
 from splendor_rl.schedules import (
     apply_learning_rate,
@@ -39,6 +41,7 @@ from .meta import (
     farthest_point_selection,
     solve_symmetric_meta_strategy,
 )
+from .multiprocess_collector import MultiprocessBatchedPopulationCollector
 from .rollout import PopulationRolloutCollector, weighted_selector
 from .scheduler import DeficitScheduler
 
@@ -56,8 +59,8 @@ def _save_learner(path, learner, config, bootstrap):
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "schema_version": "0.6.0",
-            "rl_version": "0.6.0",
+            "schema_version": "0.6.1",
+            "rl_version": "0.6.1",
             "training_mode": "population_league_2p",
             "role": learner.role,
             "generation": learner.generation,
@@ -79,7 +82,7 @@ def _save_learner(path, learner, config, bootstrap):
 
 def _load_learner(path, config, sizes, device):
     data = torch.load(path, map_location=device, weights_only=False)
-    if data.get("schema_version") != "0.6.0" or data.get("observation_sizes") != sizes:
+    if data.get("schema_version") not in {"0.6.0", "0.6.1"} or data.get("observation_sizes") != sizes:
         raise ValueError(f"incompatible population learner checkpoint: {path}")
     learner = make_learner(
         data["role"],
@@ -292,26 +295,55 @@ def _meta_update(run, pool, champion_id, config, transition, device):
     matrix = np.full((len(ids), len(ids)), 0.5)
     games = np.zeros_like(matrix, dtype=int)
     errors = np.zeros_like(matrix)
+    wins = np.zeros_like(matrix, dtype=int)
+    ties = np.zeros_like(matrix, dtype=int)
+    losses = np.zeros_like(matrix, dtype=int)
+    score_sums = np.zeros_like(matrix)
+    last_updated = np.zeros_like(matrix, dtype=int)
     cache = _load_meta_pair_cache(run, pool, replay_transition=transition)
     reused_pairs = evaluated_pairs = 0
-    pair_count = max(1, config.meta_matchup_games_per_pair // 2)
     for row in range(len(ids)):
         for col in range(row + 1, len(ids)):
             cache_key = tuple(sorted((hashes[ids[row]], hashes[ids[col]])))
             cached = cache.get(cache_key)
-            if cached is not None:
+            refresh_due = cached is not None and (
+                transition - cached["last_updated_transition"]
+                >= config.meta_refresh_interval
+            )
+            target_games = max(
+                config.meta_min_games_per_pair,
+                config.meta_matchup_games_per_pair,
+            )
+            if cached is not None and cached["games"] >= target_games and not refresh_due:
                 score = cached["score"]
+                cached_wins, cached_losses = cached["wins"], cached["losses"]
                 if hashes[ids[row]] != cache_key[0]:
                     score = 1.0 - score
+                    cached_wins, cached_losses = cached_losses, cached_wins
                 matrix[row, col], matrix[col, row] = score, 1.0 - score
                 games[row, col] = games[col, row] = cached["games"]
                 errors[row, col] = errors[col, row] = cached["standard_error"]
+                wins[row, col], losses[row, col] = cached_wins, cached_losses
+                wins[col, row], losses[col, row] = cached_losses, cached_wins
+                ties[row, col] = ties[col, row] = cached["ties"]
+                score_sums[row, col] = score * cached["games"]
+                score_sums[col, row] = (1.0 - score) * cached["games"]
+                last_updated[row, col] = last_updated[col, row] = cached[
+                    "last_updated_transition"
+                ]
                 reused_pairs += 1
                 continue
+            existing_games = cached["games"] if cached else 0
+            requested_games = (
+                config.meta_refresh_games_per_pair
+                if refresh_due and existing_games >= target_games
+                else target_games - existing_games
+            )
+            evaluation_pairs = max(1, (requested_games + 1) // 2)
             result = paired_actor_evaluation(
                 actors[ids[row]],
                 actors[ids[col]],
-                pair_count=pair_count,
+                pair_count=evaluation_pairs,
                 seed_base=config.seed
                 + 30_000_000
                 + transition
@@ -319,15 +351,47 @@ def _meta_update(run, pool, champion_id, config, transition, device):
                 + col * 100,
             )
             values = np.asarray(result["pair_scores"])
-            score = float(values.mean())
+            new_games = int(result["games"])
+            row_new_score = float(values.mean())
+            if cached:
+                cached_score = cached["score"]
+                if hashes[ids[row]] != cache_key[0]:
+                    cached_score = 1.0 - cached_score
+                score = (
+                    cached_score * existing_games + row_new_score * new_games
+                ) / (existing_games + new_games)
+            else:
+                score = row_new_score
             matrix[row, col] = score
             matrix[col, row] = 1 - score
-            games[row, col] = games[col, row] = len(values) * 2
+            total_games = existing_games + new_games
+            games[row, col] = games[col, row] = total_games
             errors[row, col] = errors[col, row] = (
                 float(values.std(ddof=1) / np.sqrt(len(values)))
                 if len(values) > 1
                 else 0.5
             )
+            raw_scores = result["raw_game_scores"]
+            new_wins = sum(value == 1.0 for value in raw_scores)
+            new_ties = sum(value == 0.5 for value in raw_scores)
+            new_losses = sum(value == 0.0 for value in raw_scores)
+            old_wins = old_ties = old_losses = 0
+            if cached:
+                old_wins, old_losses = cached["wins"], cached["losses"]
+                old_ties = cached["ties"]
+                if hashes[ids[row]] != cache_key[0]:
+                    old_wins, old_losses = old_losses, old_wins
+            wins[row, col], ties[row, col], losses[row, col] = (
+                old_wins + new_wins,
+                old_ties + new_ties,
+                old_losses + new_losses,
+            )
+            wins[col, row], ties[col, row], losses[col, row] = (
+                losses[row, col], ties[row, col], wins[row, col]
+            )
+            score_sums[row, col] = score * total_games
+            score_sums[col, row] = (1.0 - score) * total_games
+            last_updated[row, col] = last_updated[col, row] = transition
             evaluated_pairs += 1
     solver_matrix = antisymmetrize_score_matrix(matrix)
     solved = solve_symmetric_meta_strategy(
@@ -348,7 +412,7 @@ def _meta_update(run, pool, champion_id, config, transition, device):
             for key, row in zip(ids, values, strict=True):
                 writer.writerow([key, *row])
     payload = {
-        "schema_version": "0.6.0",
+        "schema_version": "0.6.1",
         "population_transition": transition,
         "policy_ids": ids,
         "policy_hashes": hashes,
@@ -356,6 +420,11 @@ def _meta_update(run, pool, champion_id, config, transition, device):
         "solver_payoff_matrix": solver_matrix.tolist(),
         "games": games.tolist(),
         "standard_errors": errors.tolist(),
+        "wins": wins.tolist(),
+        "ties": ties.tolist(),
+        "losses": losses.tolist(),
+        "score_sums": score_sums.tolist(),
+        "last_updated_transitions": last_updated.tolist(),
         "reused_pairs": reused_pairs,
         "evaluated_pairs": evaluated_pairs,
         **solved.to_dict(),
@@ -416,12 +485,31 @@ def _load_meta_pair_cache(run, pool, replay_transition=None):
                         continue
                     key = tuple(sorted((left_hash, right_hash)))
                     score = float(payload["raw_score_matrix"][row][col])
+                    cached_wins = (
+                        int(payload["wins"][row][col]) if "wins" in payload else 0
+                    )
+                    cached_losses = (
+                        int(payload["losses"][row][col])
+                        if "losses" in payload
+                        else 0
+                    )
                     if left_hash != key[0]:
                         score = 1.0 - score
+                        cached_wins, cached_losses = cached_losses, cached_wins
                     cache[key] = {
                         "score": score,
                         "games": int(payload["games"][row][col]),
                         "standard_error": float(payload["standard_errors"][row][col]),
+                        "wins": cached_wins,
+                        "ties": int(payload.get("ties", [[0]])[row][col])
+                        if "ties" in payload
+                        else 0,
+                        "losses": cached_losses,
+                        "last_updated_transition": int(
+                            payload.get("last_updated_transitions", [])[row][col]
+                        )
+                        if payload.get("last_updated_transitions")
+                        else int(payload.get("population_transition", 0)),
                     }
         except (KeyError, ValueError, json.JSONDecodeError):
             continue
@@ -536,7 +624,7 @@ def _archive_or_respawn(
         archive.mkdir(parents=True, exist_ok=True)
         torch.save(
             {
-                "schema_version": "0.6.0",
+                "schema_version": "0.6.1",
                 "opponent_id": archive_id,
                 "role": learner.role,
                 "generation": learner.generation,
@@ -700,7 +788,7 @@ def _promotion(
             action_size=sizes["action"],
         )
     result = {
-        "schema_version": "0.6.0",
+        "schema_version": "0.6.1",
         "population_transition": population_transition,
         "evaluated_champion_id": champion_id,
         "head_to_head": {**paired, **ci},
@@ -740,7 +828,7 @@ def _state(
     bootstrap,
 ):
     value = {
-        "schema_version": "0.6.0",
+        "schema_version": "0.6.1",
         "population_transition": transition,
         "source": {
             "source_rl_version": bootstrap["source_rl_version"],
@@ -787,6 +875,61 @@ def _state(
     return value
 
 
+def _next_boundary(current, interval):
+    return ((int(current) // int(interval)) + 1) * int(interval)
+
+
+def _migrate_thresholds(thresholds, learners, transition, config):
+    """Move orchestration-only cadence forward without replaying missed gates."""
+    result = dict(thresholds)
+    result["next_meta"] = _next_boundary(transition, config.meta_update_interval)
+    result["next_promotion"] = _next_boundary(
+        transition, config.main_promotion_interval
+    )
+    result["next_recent"] = max(
+        int(result.get("next_recent", 0)),
+        _next_boundary(transition, config.recent_snapshot_interval),
+    )
+    result["next_full_checkpoint"] = _next_boundary(
+        transition, config.checkpoint_full_interval
+    )
+    result["next_lightweight_state"] = _next_boundary(
+        transition, config.checkpoint_lightweight_interval
+    )
+    interval = (
+        config.exploiter_evaluation_interval_learner_transitions
+        or config.exploiter_evaluation_interval
+    )
+    existing = result.get("next_exploiter_eval_by_role", {})
+    result["next_exploiter_eval_by_role"] = {
+        role: max(
+            int(existing.get(role, 0)),
+            _next_boundary(learners[role].transitions, interval),
+        )
+        for role in ROLES[1:]
+    }
+    result.pop("next_exploiter_eval", None)
+    return result
+
+
+def _write_migration_manifest(run, source_state, transition, backend):
+    source_state = Path(source_state).resolve()
+    digest = hashlib.sha256(source_state.read_bytes()).hexdigest()
+    backup = Path(run) / "pre_v061_backup"
+    backup.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "source_version": "0.6.0",
+        "target_version": "0.6.1",
+        "population_transition": transition,
+        "source_checkpoint": str(source_state),
+        "source_checkpoint_sha256": digest,
+        "migrated_at": datetime.now(timezone.utc).isoformat(),
+        "collector_backend": backend,
+    }
+    _atomic_json(backup / "migration_manifest.json", manifest)
+    return manifest
+
+
 def train_population(
     config: PopulationConfig,
     run_dir,
@@ -796,6 +939,8 @@ def train_population(
     stop_at_population_transitions=None,
     device=None,
     progress_config=None,
+    resume_dry_run=False,
+    profile_output=None,
 ):
     config.validate()
     run = Path(run_dir)
@@ -809,7 +954,8 @@ def train_population(
     source = None
     if resume:
         state = json.loads(Path(resume).read_text(encoding="utf-8"))
-        if state.get("schema_version") != "0.6.0":
+        source_schema = state.get("schema_version")
+        if source_schema not in {"0.6.0", "0.6.1"}:
             raise ValueError("unsupported population state")
         # Pool and architecture are reconstructed from the persisted run.
         first = torch.load(
@@ -819,7 +965,12 @@ def train_population(
         )
         config.hidden_sizes = list(first["config"]["hidden_sizes"])
         sizes = first["observation_sizes"]
-        pool = OpponentPool(run / "population/pool", config.hidden_sizes, device)
+        pool = OpponentPool(
+            run / "population/pool",
+            config.hidden_sizes,
+            device,
+            max_cached_actors=config.frozen_actor_cache_size,
+        )
         learners = {
             role: _load_learner(run / item["checkpoint"], config, sizes, device)
             for role, item in state["learners"].items()
@@ -829,12 +980,33 @@ def train_population(
         champion_id = state["main"]["champion_id"]
         champion_version = state["main"]["champion_version"]
         meta = state["meta_strategy"]
+        # Do not thrash the LRU while resuming a legacy 24-policy meta mixture;
+        # the next fast meta update naturally contracts it to max_policies=16.
+        pool.max_cached_actors = max(
+            config.frozen_actor_cache_size, len(meta.get("policy_ids", [])) + 5
+        )
         thresholds = state["thresholds"]
         source = {
             **state["source"],
             "sizes": sizes,
             "population_transition": transition,
         }
+        thresholds = _migrate_thresholds(thresholds, learners, transition, config)
+        if resume_dry_run:
+            print("Loaded v0.6.0 state successfully." if source_schema == "0.6.0" else "Loaded v0.6.1 state successfully.")
+            print(f"Population transition: {transition:,}")
+            print(f"Current champion: {champion_id}")
+            print("Main optimizer: restored")
+            print("Exploiters: restored")
+            print("Meta strategy: restored")
+            print(f"Next promotion threshold: {thresholds['next_promotion']:,}")
+            print(f"Next meta threshold: {thresholds['next_meta']:,}")
+            print("Migration target schema: v0.6.1")
+            print("Population horizon: 50,000,000")
+            print("SAFE TO RESUME\nNo training executed.")
+            return {"state": state, "thresholds": thresholds, "safe_to_resume": True}
+        if source_schema == "0.6.0":
+            _write_migration_manifest(run, resume, transition, config.collector_backend)
         recovered_pool_entries = _reconcile_pool_to_committed_state(
             pool, learners, transition, config, sizes
         )
@@ -842,7 +1014,7 @@ def train_population(
             _atomic_json(
                 run / "recovery_report.json",
                 {
-                    "schema_version": "0.6.0",
+                    "schema_version": "0.6.1",
                     "committed_population_transition": transition,
                     "removed_uncommitted_pool_entries": recovered_pool_entries,
                 },
@@ -885,6 +1057,13 @@ def train_population(
             "next_recent": config.recent_snapshot_interval,
             "promotion_attempts": 0,
             "promotion_successes": 0,
+            "next_full_checkpoint": config.checkpoint_full_interval,
+            "next_lightweight_state": config.checkpoint_lightweight_interval,
+            "next_exploiter_eval_by_role": {
+                role: config.exploiter_evaluation_interval_learner_transitions
+                or config.exploiter_evaluation_interval
+                for role in ROLES[1:]
+            },
         }
         source["population_transition"] = 0
         source["population_seed"] = config.seed
@@ -896,7 +1075,7 @@ def train_population(
                 if key not in {"actor_state_dict", "critic_state_dict", "pool"}
             }
             | {
-                "schema_version": "0.6.0",
+                "schema_version": "0.6.1",
                 "optimizer_reset": True,
                 "learning_rate_schedule_reset": True,
                 "entropy_schedule_reset": True,
@@ -933,6 +1112,7 @@ def train_population(
     archive_events = []
     illegal_actions = invariant_violations = 0
     round_metrics = []
+    profiler = WallProfiler(config.profiling_enabled)
     progress = make_training_progress(
         target,
         transition,
@@ -955,20 +1135,31 @@ def train_population(
         role_config = copy.copy(config)
         role_config.seed = update_seed
         selector = _selector(role, config, pool, records, champion_id, meta)
-        collector = PopulationRolloutCollector(
-            learner.actor,
-            learner.critic,
-            role=role,
-            pool=pool,
-            records=records,
-            config=role_config,
-            selector=selector,
-            update_index=learner.updates,
-            device=device,
+        collector_class = (
+            MultiprocessBatchedPopulationCollector
+            if config.collector_backend == "multiprocess_batched"
+            else PopulationRolloutCollector
         )
-        batch, advantages, returns, rollout = collector.collect(
-            count, config.gae_lambda
-        )
+        collector_kwargs = {
+            "role": role,
+            "pool": pool,
+            "records": records,
+            "config": role_config,
+            "selector": selector,
+            "update_index": learner.updates,
+            "device": device,
+        }
+        if collector_class is MultiprocessBatchedPopulationCollector:
+            collector_kwargs["profiler"] = profiler
+        collector = collector_class(learner.actor, learner.critic, **collector_kwargs)
+        try:
+            batch, advantages, returns, rollout = collector.collect(
+                count, config.gae_lambda
+            )
+        finally:
+            close = getattr(collector, "close", None)
+            if close:
+                close()
         illegal_actions += collector.illegal_actions
         invariant_violations += collector.invariant_violations
         round_metrics.extend(collector.episodes)
@@ -991,15 +1182,16 @@ def train_population(
             schedule_position,
             budget,
         )
-        update = ppo_update(
-            learner.actor,
-            learner.critic,
-            learner.optimizer,
-            batch,
-            advantages,
-            returns,
-            config,
-        )
+        with profiler.measure("PPO_forward"):
+            update = ppo_update(
+                learner.actor,
+                learner.critic,
+                learner.optimizer,
+                batch,
+                advantages,
+                returns,
+                config,
+            )
         learner.transitions += len(batch)
         learner.updates += 1
         learner.generation_transitions += len(batch)
@@ -1040,13 +1232,15 @@ def train_population(
             while transition >= thresholds["next_recent"]:
                 thresholds["next_recent"] += config.recent_snapshot_interval
         if transition >= thresholds["next_meta"]:
-            meta = _meta_update(run, pool, champion_id, config, transition, device)
+            with profiler.measure("meta_matchup_evaluation"):
+                meta = _meta_update(run, pool, champion_id, config, transition, device)
             while transition >= thresholds["next_meta"]:
                 thresholds["next_meta"] += config.meta_update_interval
-        if transition >= thresholds["next_exploiter_eval"]:
-            for exploiter_role in ROLES[1:]:
-                archive_events.append(
-                    _archive_or_respawn(
+        for exploiter_role in ROLES[1:]:
+            local_threshold = thresholds["next_exploiter_eval_by_role"][exploiter_role]
+            if learners[exploiter_role].transitions >= local_threshold:
+                with profiler.measure("exploiter_evaluation"):
+                    event = _archive_or_respawn(
                         run,
                         learners[exploiter_role],
                         pool,
@@ -1058,47 +1252,69 @@ def train_population(
                         transition,
                         device,
                     )
+                archive_events.append(
+                    event
                 )
-            while transition >= thresholds["next_exploiter_eval"]:
-                thresholds["next_exploiter_eval"] += (
-                    config.exploiter_evaluation_interval
+                interval = (
+                    config.exploiter_evaluation_interval_learner_transitions
+                    or config.exploiter_evaluation_interval
                 )
+                while learners[exploiter_role].transitions >= local_threshold:
+                    local_threshold += interval
+                thresholds["next_exploiter_eval_by_role"][exploiter_role] = local_threshold
         promotion = None
         if transition >= thresholds["next_promotion"]:
             promotion_attempts += 1
-            champion_id, champion_version, promotion = _promotion(
-                run,
-                learners["main"],
-                pool,
-                champion_id,
-                champion_version,
-                meta,
-                config,
-                transition,
-                sizes,
-                device,
-            )
+            with profiler.measure("promotion_evaluation"):
+                champion_id, champion_version, promotion = _promotion(
+                    run,
+                    learners["main"],
+                    pool,
+                    champion_id,
+                    champion_version,
+                    meta,
+                    config,
+                    transition,
+                    sizes,
+                    device,
+                )
             promotion_successes += int(promotion["promoted"])
             thresholds["promotion_attempts"] = promotion_attempts
             thresholds["promotion_successes"] = promotion_successes
             while transition >= thresholds["next_promotion"]:
                 thresholds["next_promotion"] += config.main_promotion_interval
         source["population_transition"] = transition
-        for item in learners.values():
-            _save_learner(run / f"learners/{item.role}/latest.pt", item, config, source)
-        records.save()
-        state = _state(
-            run,
-            transition,
-            learners,
-            scheduler,
-            champion_id,
-            champion_version,
-            pool,
-            meta,
-            thresholds,
-            source,
+        checkpoint_due = (
+            transition >= thresholds["next_full_checkpoint"] or transition >= target
         )
+        if checkpoint_due:
+            with profiler.measure("checkpoint_save"):
+                records.save()
+                for item in learners.values():
+                    _save_learner(
+                        run / f"learners/{item.role}/latest.pt", item, config, source
+                    )
+                state = _state(
+                    run, transition, learners, scheduler, champion_id,
+                    champion_version, pool, meta, thresholds, source,
+                )
+            while transition >= thresholds["next_full_checkpoint"]:
+                thresholds["next_full_checkpoint"] += config.checkpoint_full_interval
+        if transition >= thresholds["next_lightweight_state"]:
+            _atomic_json(
+                run / "lightweight_state.json",
+                {
+                    "schema_version": "0.6.1",
+                    "diagnostic_only": True,
+                    "authoritative_resume": "population_state.json",
+                    "population_transition": transition,
+                    "learner_transitions": {
+                        key: value.transitions for key, value in learners.items()
+                    },
+                },
+            )
+            while transition >= thresholds["next_lightweight_state"]:
+                thresholds["next_lightweight_state"] += config.checkpoint_lightweight_interval
         metrics.write(
             {
                 "population_transition": transition,
@@ -1118,8 +1334,11 @@ def train_population(
                 "champion_version": champion_version,
                 "meta_population_size": len(meta["policy_ids"]),
                 "promotion_result": promotion,
+                "checkpoint_saved": checkpoint_due,
             }
         )
+        if profile_output and config.profiling_enabled:
+            profiler.write(profile_output)
         progress.update_training(
             len(batch),
             transitions=transition,
@@ -1167,8 +1386,8 @@ def train_population(
         )
         exploiter_scores.append(float(result["paired_score"]))
     summary = {
-        "schema_version": "0.6.0",
-        "rl_version": "0.6.0",
+        "schema_version": "0.6.1",
+        "rl_version": "0.6.1",
         "training_mode": "population_league_2p",
         "started_at": started,
         "ended_at": datetime.now(timezone.utc).isoformat(),

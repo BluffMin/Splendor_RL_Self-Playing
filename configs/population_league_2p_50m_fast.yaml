@@ -1,0 +1,53 @@
+seed: 42
+training_mode: population_league_2p
+num_players: 2
+num_envs: 32
+hidden_sizes: [512, 512, 512]
+transitions_per_update: 16384
+update_epochs: 4
+minibatch_size: 2048
+total_population_transitions: 50000000
+scheduler: {main: 0.60, main_exploiter_0: 0.10, main_exploiter_1: 0.10, league_exploiter_0: 0.10, league_exploiter_1: 0.10}
+main_training: {current_selfplay: 0.20, champion: 0.15, historical_pfsp: 0.20, meta_strategy: 0.20, main_exploiter: 0.15, league_exploiter: 0.10}
+main_exploiter: {current_champion: 0.70, current_main: 0.20, hall_of_fame: 0.10}
+league_exploiter: {meta_strategy: 0.70, historical_pfsp: 0.20, current_champion: 0.10}
+collector:
+  backend: multiprocess_batched
+  num_rollout_workers: 8
+  envs_per_worker: 8
+  inference_batch_timeout_ms: 2
+  pin_memory: true
+inference: {frozen_actor_cache_size: 16, max_batch_size: 256}
+evaluation: {num_workers: 4, asynchronous: false, preset: training_fast}
+meta:
+  update_interval: 2000000
+  max_policies: 16
+  matchup_games_per_pair: 50
+  min_games_per_pair: 50
+  refresh_games_per_pair: 20
+  refresh_interval: 10000000
+  solver: {method: regret_matching, iterations: 20000}
+exploiter:
+  evaluation_interval: 500000
+  evaluation_interval_learner_transitions: 1000000
+  pair_count: 150
+  bootstrap_samples: 3000
+  min_target_score: 0.55
+  min_ci_lower: 0.50
+  max_transitions_without_success: 2000000
+main_promotion:
+  interval: 2000000
+  pair_count: 300
+  bootstrap_samples: 3000
+  min_score: 0.55
+  min_ci_lower: 0.50
+  min_meta_delta: 0.0
+  max_exploiter_regression: 0.03
+promotion_anchor_games: 200
+recent_snapshot_interval: 250000
+checkpoint:
+  full_interval_population_transitions: 1000000
+  lightweight_state_interval_population_transitions: 250000
+profiling:
+  enabled: true
+  report_interval_population_transitions: 500000

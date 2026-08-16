@@ -1,0 +1,8 @@
+evaluation:
+  preset: final_precise
+  num_workers: 8
+  fixed_bot_games_per_matchup: 1000
+  important_population_games_per_pair: 1000
+  promotion_analysis_pairs: 1000
+  bootstrap_samples: 20000
+

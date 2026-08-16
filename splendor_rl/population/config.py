@@ -102,6 +102,25 @@ class PopulationConfig:
     pfsp_prior_beta: float = 1.0
     pfsp_alpha: float = 1.0
     pfsp_epsilon: float = 0.05
+    collector_backend: str = "single_process"
+    num_rollout_workers: int = 8
+    envs_per_worker: int = 8
+    inference_batch_timeout_ms: float = 2.0
+    inference_max_batch_size: int = 256
+    pin_memory: bool = True
+    frozen_actor_cache_size: int = 16
+    evaluation_num_workers: int = 1
+    evaluation_asynchronous: bool = False
+    evaluation_preset: str = "training_fast"
+    evaluation_device: str | None = None
+    profiling_enabled: bool = False
+    profiling_report_interval: int = 500_000
+    checkpoint_full_interval: int = 1_000_000
+    checkpoint_lightweight_interval: int = 250_000
+    exploiter_evaluation_interval_learner_transitions: int | None = None
+    meta_min_games_per_pair: int = 50
+    meta_refresh_games_per_pair: int = 20
+    meta_refresh_interval: int = 10_000_000
 
     @classmethod
     def load(cls, path):
@@ -110,12 +129,38 @@ class PopulationConfig:
         solver = meta.pop("solver", {})
         exploiter = raw.pop("exploiter", {})
         promotion = raw.pop("main_promotion", {})
+        collector = raw.pop("collector", {})
+        inference = raw.pop("inference", {})
+        evaluation = raw.pop("evaluation", {})
+        profiling = raw.pop("profiling", {})
+        checkpoint = raw.pop("checkpoint", {})
         aliases = {
             **raw,
             **{f"meta_{k}": v for k, v in meta.items()},
             "meta_solver_iterations": solver.get("iterations", 20_000),
             **{f"exploiter_{k}": v for k, v in exploiter.items()},
             **{f"main_promotion_{k}": v for k, v in promotion.items()},
+            **{f"collector_{k}": v for k, v in collector.items() if k == "backend"},
+            **{k: v for k, v in collector.items() if k in {"num_rollout_workers", "envs_per_worker", "inference_batch_timeout_ms", "pin_memory"}},
+            **{
+                (
+                    "frozen_actor_cache_size"
+                    if k == "frozen_actor_cache_size"
+                    else f"inference_{k}"
+                ): v
+                for k, v in inference.items()
+            },
+            **{f"evaluation_{k}": v for k, v in evaluation.items()},
+            "profiling_enabled": profiling.get("enabled", False),
+            "profiling_report_interval": profiling.get(
+                "report_interval_population_transitions", 500_000
+            ),
+            "checkpoint_full_interval": checkpoint.get(
+                "full_interval_population_transitions", 1_000_000
+            ),
+            "checkpoint_lightweight_interval": checkpoint.get(
+                "lightweight_state_interval_population_transitions", 250_000
+            ),
         }
         value = cls(**aliases)
         value.validate()
@@ -137,6 +182,10 @@ class PopulationConfig:
                 raise ValueError("opponent mixture must be non-negative and sum to one")
         if self.total_population_transitions <= 0 or self.transitions_per_update <= 0:
             raise ValueError("transition counts must be positive")
+        if self.collector_backend not in {"single_process", "multiprocess_batched"}:
+            raise ValueError("unsupported collector backend")
+        if self.num_rollout_workers <= 0 or self.envs_per_worker <= 0:
+            raise ValueError("collector worker and environment counts must be positive")
 
     @property
     def total_transitions(self):

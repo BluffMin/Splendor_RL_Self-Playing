@@ -1,8 +1,20 @@
 # Splendor Self-Play Environment
 
-## Population league v0.6.0
+## High-throughput population league v0.6.1
 
-The repository now supports PPO-based population league self-play with independent Main and Exploiter learners, a sequential single-GPU scheduler, and a PSRO-lite empirical meta-strategy. It bootstraps the completed v0.5 league without continuing its exhausted optimizer or learning-rate schedule. See [Population league](docs/population_league.md).
+v0.6.1 keeps the five PPO learners and PSRO-lite algorithm while moving environment
+execution to Windows-safe spawned workers and batching policy inference centrally.
+The legacy `single_process` backend remains available for reference.
+
+Dry-run the current 50M state before resuming:
+
+```powershell
+python .\experiments\train_population_league.py --config .\configs\population_league_2p_50m_fast.yaml --run-dir .\runs\population_league_2p_50m_seed42 --resume .\runs\population_league_2p_50m_seed42\population_state.json --collector-backend multiprocess_batched --num-rollout-workers 8 --envs-per-worker 8 --device cuda --progress always --profile --resume-dry-run
+```
+
+Remove `--resume-dry-run` to continue to the original 50M total horizon. See
+[performance](docs/performance.md), [collector architecture](docs/multiprocess_collector.md),
+[migration](docs/v060_to_v061_resume.md), and [benchmarking](docs/benchmarking.md).
 
 ## Empirical league bootstrap v0.5.1
 

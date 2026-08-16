@@ -267,6 +267,11 @@ def paired_actor_evaluation(
         "pairs": pair_count,
         "games": pair_count * 2,
         "pair_scores": pair_scores,
+        "raw_game_scores": [
+            score
+            for pair in zip(p0_scores, p1_scores, strict=True)
+            for score in pair
+        ],
         "candidate_as_p0_score": float(np.mean(p0_scores)),
         "candidate_as_p1_score": float(np.mean(p1_scores)),
         "seat_gap": float(abs(np.mean(p0_scores) - np.mean(p1_scores))),

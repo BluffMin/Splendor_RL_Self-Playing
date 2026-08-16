@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -75,13 +76,14 @@ class FrozenOpponent:
 
 
 class OpponentPool:
-    def __init__(self, root, hidden_sizes, device="cpu"):
+    def __init__(self, root, hidden_sizes, device="cpu", max_cached_actors=None):
         self.root = Path(root)
         self.index_path = self.root / "index.json"
         self.hidden_sizes = list(hidden_sizes)
         self.device = torch.device(device)
         self.metadata: dict[str, OpponentMetadata] = {}
-        self.loaded: dict[str, FrozenOpponent] = {}
+        self.loaded: OrderedDict[str, FrozenOpponent] = OrderedDict()
+        self.max_cached_actors = max_cached_actors
         if self.index_path.exists():
             raw = json.loads(self.index_path.read_text(encoding="utf-8"))
             self.metadata = {
@@ -191,6 +193,7 @@ class OpponentPool:
 
     def load(self, opponent_id):
         if opponent_id in self.loaded:
+            self.loaded.move_to_end(opponent_id)
             return self.loaded[opponent_id]
         if opponent_id not in self.metadata:
             raise KeyError(f"unknown opponent: {opponent_id}")
@@ -210,6 +213,9 @@ class OpponentPool:
         actor.load_state_dict(payload["actor_state_dict"])
         result = FrozenOpponent(actor, metadata, self.device)
         self.loaded[opponent_id] = result
+        if self.max_cached_actors:
+            while len(self.loaded) > self.max_cached_actors:
+                self.loaded.popitem(last=False)
         return result
 
     @property

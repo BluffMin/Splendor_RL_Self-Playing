@@ -1,0 +1,12 @@
+# Experimental only: changes PPO update dynamics; do not use for the existing run.
+seed: 42
+training_mode: population_league_2p
+num_players: 2
+num_envs: 64
+hidden_sizes: [512, 512, 512]
+transitions_per_update: 32768
+update_epochs: 4
+minibatch_size: 4096
+total_population_transitions: 50000000
+collector: {backend: multiprocess_batched, num_rollout_workers: 8, envs_per_worker: 8}
+

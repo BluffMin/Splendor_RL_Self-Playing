@@ -7,3 +7,4 @@ runs/
 dist/
 build/
 *.egg-info/
+configs/*_fast_local.yaml

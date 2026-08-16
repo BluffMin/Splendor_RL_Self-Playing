@@ -1,5 +1,11 @@
 # Population league
 
+v0.6.1 changes execution, not the learning algorithm. Main/ME/LE roles, scheduler
+allocation, PPO objective, GAE, rewards, PFSP, opponent mixtures, Champion gates,
+and PSRO-lite semantics are retained. `multiprocess_batched` can change stochastic
+RNG ordering, so state continuity is guaranteed but bitwise rollout-sequence
+continuity is not. Select `single_process` when exact legacy ordering is required.
+
 v0.6.0 trains five independent PPO roles sequentially: Main, two Main Exploiters, and two League Exploiters. Every role owns its actor, critic, optimizer, learning-rate/entropy schedule, counters, and deterministic update stream. Frozen snapshots are used as opponents; opponent actions never enter the learner PPO batch.
 
 The default scheduler allocates 60% of population transitions to Main and 10% to each exploiter. `total_population_transitions` counts the sum of transitions actually used by all five PPO learners.

@@ -76,7 +76,10 @@ def test_meta_cache_reuses_immutable_actor_hash_pairs(tmp_path):
     }
     (output / "meta_strategy.json").write_text(json.dumps(payload))
     cached = _load_meta_pair_cache(tmp_path, object())
-    assert cached[("ha", "hb")] == {
+    assert {
+        key: cached[("ha", "hb")][key]
+        for key in ("score", "games", "standard_error")
+    } == {
         "score": 0.7,
         "games": 100,
         "standard_error": 0.04,
