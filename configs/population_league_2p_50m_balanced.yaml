@@ -1,0 +1,9 @@
+extends: population_league_2p_50m_fast.yaml
+
+# Foreground-friendly default for Excel, browser, VS Code, and PowerShell use.
+collector:
+  num_rollout_workers: 6
+  envs_per_worker: 8
+resources:
+  preset: balanced
+

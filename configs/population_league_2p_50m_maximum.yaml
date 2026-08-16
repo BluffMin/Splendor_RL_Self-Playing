@@ -1,0 +1,9 @@
+extends: population_league_2p_50m_fast.yaml
+
+# Use only while the PC is unattended.
+collector:
+  num_rollout_workers: 8
+  envs_per_worker: 8
+resources:
+  preset: maximum
+

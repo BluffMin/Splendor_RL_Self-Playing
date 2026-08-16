@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import torch
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -19,6 +20,7 @@ from splendor_rl.population.multiprocess_collector import (
 )
 from splendor_rl.population.rollout import PopulationRolloutCollector
 from splendor_rl.population.train import _load_learner, _selector
+from splendor_rl.resource_tuning import ResourceSampler, select_recommendation
 
 
 def _csv_ints(value):
@@ -35,6 +37,8 @@ def main(argv=None):
     parser.add_argument("--envs-per-worker", default="4,8,16")
     parser.add_argument("--transitions", type=int, default=100_000)
     parser.add_argument("--output")
+    parser.add_argument("--preset", choices=["balanced", "maximum"], default="balanced")
+    parser.add_argument("--write-local-config")
     parser.add_argument("--progress", choices=["auto", "always", "never"], default="auto")
     args = parser.parse_args(argv)
     run = Path(args.run_dir)
@@ -64,6 +68,7 @@ def main(argv=None):
         selector = _selector("main", candidate, pool, records, champion, meta)
         collector_class = PopulationRolloutCollector if workers == 0 else MultiprocessBatchedPopulationCollector
         torch.manual_seed(candidate.seed)
+        sampler = ResourceSampler().start()
         started = time.perf_counter()
         collector = collector_class(
             learner.actor, learner.critic, role="main", pool=pool, records=records,
@@ -77,6 +82,7 @@ def main(argv=None):
             if close:
                 close()
         wall = time.perf_counter() - started
+        resources = sampler.stop()
         row = {
             "backend": "single_process" if workers == 0 else "multiprocess_batched",
             "workers": workers,
@@ -90,15 +96,12 @@ def main(argv=None):
             "illegal_actions": metrics["illegal_actions"],
             "invariant_violations": metrics["invariant_violations"],
             "wall_seconds": wall,
+            **resources,
         }
         results.append(row)
         print(json.dumps(row))
     baseline = results[0]["learning_transitions_per_second"]
-    stable = [
-        row for row in results[1:]
-        if row["illegal_actions"] == 0 and row["invariant_violations"] == 0
-    ]
-    winner = max(stable, key=lambda row: row["learning_transitions_per_second"])
+    winner = select_recommendation(results, args.preset)
     payload = {
         "schema_version": "0.6.1",
         "source_checkpoint": str(checkpoint),
@@ -106,14 +109,23 @@ def main(argv=None):
         "results": results,
         "recommended": winner,
         "measured_speedup": winner["learning_transitions_per_second"] / baseline,
+        "resource_preset": args.preset,
     }
     output = Path(args.output) if args.output else run / "benchmarks/collector_benchmark.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if args.write_local_config:
+        local = config.to_dict()
+        local["collector_backend"] = "multiprocess_batched"
+        local["num_rollout_workers"] = winner["workers"]
+        local["envs_per_worker"] = winner["envs_per_worker"]
+        local["resource_preset"] = args.preset
+        Path(args.write_local_config).write_text(
+            yaml.safe_dump(local, sort_keys=False), encoding="utf-8"
+        )
     print(f"Recommended: workers={winner['workers']}, envs_per_worker={winner['envs_per_worker']}")
     print(f"Measured speedup: {payload['measured_speedup']:.2f}x")
 
 
 if __name__ == "__main__":
     main()
-

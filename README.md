@@ -16,6 +16,10 @@ Remove `--resume-dry-run` to continue to the original 50M total horizon. See
 [performance](docs/performance.md), [collector architecture](docs/multiprocess_collector.md),
 [migration](docs/v060_to_v061_resume.md), and [benchmarking](docs/benchmarking.md).
 
+Use `population_league_2p_50m_balanced.yaml` while Excel or other foreground
+applications are active (6×8). Use `population_league_2p_50m_maximum.yaml` only
+while the PC is unattended (8×8).
+
 ## Empirical league bootstrap v0.5.1
 
 Multiple unique shared-PPO checkpoints can now seed a diverse league. Champion promotion treats Greedy, Noble, and Blocking as hard anchors and Random and Shortest as saturated non-regression anchors. See [the bootstrap guide](docs/league_bootstrap.md).

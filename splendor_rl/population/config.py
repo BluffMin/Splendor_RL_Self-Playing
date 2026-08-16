@@ -121,10 +121,26 @@ class PopulationConfig:
     meta_min_games_per_pair: int = 50
     meta_refresh_games_per_pair: int = 20
     meta_refresh_interval: int = 10_000_000
+    resource_preset: str = "balanced"
+    resource_cpu_preferred_max: float = 65.0
+    resource_cpu_hard_max: float = 80.0
+    resource_ram_preferred_max: float = 65.0
+    resource_ram_hard_max: float = 80.0
+    resource_min_free_ram_gb: float = 20.0
+    resource_gpu_preferred_max: float = 85.0
+    resource_vram_preferred_max_gb: float = 6.0
+    resource_gpu_temperature_preferred_max: float = 70.0
+    resource_gpu_temperature_hard_max: float = 75.0
 
     @classmethod
     def load(cls, path):
-        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        path = Path(path)
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        parent = raw.pop("extends", None)
+        if parent:
+            base_path = (path.parent / parent).resolve()
+            base = yaml.safe_load(base_path.read_text(encoding="utf-8"))
+            raw = _deep_merge(base, raw)
         meta = raw.pop("meta", {})
         solver = meta.pop("solver", {})
         exploiter = raw.pop("exploiter", {})
@@ -134,6 +150,7 @@ class PopulationConfig:
         evaluation = raw.pop("evaluation", {})
         profiling = raw.pop("profiling", {})
         checkpoint = raw.pop("checkpoint", {})
+        resources = raw.pop("resources", {})
         aliases = {
             **raw,
             **{f"meta_{k}": v for k, v in meta.items()},
@@ -161,6 +178,7 @@ class PopulationConfig:
             "checkpoint_lightweight_interval": checkpoint.get(
                 "lightweight_state_interval_population_transitions", 250_000
             ),
+            **{f"resource_{k}": v for k, v in resources.items()},
         }
         value = cls(**aliases)
         value.validate()
@@ -186,6 +204,8 @@ class PopulationConfig:
             raise ValueError("unsupported collector backend")
         if self.num_rollout_workers <= 0 or self.envs_per_worker <= 0:
             raise ValueError("collector worker and environment counts must be positive")
+        if self.resource_preset not in {"balanced", "maximum"}:
+            raise ValueError("resource preset must be balanced or maximum")
 
     @property
     def total_transitions(self):
@@ -195,3 +215,13 @@ class PopulationConfig:
         from dataclasses import asdict
 
         return asdict(self)
+
+
+def _deep_merge(base, override):
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result

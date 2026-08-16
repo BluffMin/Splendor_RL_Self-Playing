@@ -13,7 +13,7 @@ main_exploiter: {current_champion: 0.70, current_main: 0.20, hall_of_fame: 0.10}
 league_exploiter: {meta_strategy: 0.70, historical_pfsp: 0.20, current_champion: 0.10}
 collector:
   backend: multiprocess_batched
-  num_rollout_workers: 8
+  num_rollout_workers: 6
   envs_per_worker: 8
   inference_batch_timeout_ms: 2
   pin_memory: true
@@ -51,3 +51,14 @@ checkpoint:
 profiling:
   enabled: true
   report_interval_population_transitions: 500000
+resources:
+  preset: balanced
+  cpu_preferred_max: 65
+  cpu_hard_max: 80
+  ram_preferred_max: 65
+  ram_hard_max: 80
+  min_free_ram_gb: 20
+  gpu_preferred_max: 85
+  vram_preferred_max_gb: 6
+  gpu_temperature_preferred_max: 70
+  gpu_temperature_hard_max: 75

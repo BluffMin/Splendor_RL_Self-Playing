@@ -2,6 +2,10 @@
 
 ## v0.6.1 - High-Throughput Population Training
 
+- Added BALANCED and MAXIMUM resource presets. BALANCED reserves CPU, RAM, and
+  VRAM headroom for Excel and other foreground desktop applications.
+- Added resource-aware auto-tuning; configurations within 10% throughput favor
+  materially lower CPU/RAM use in BALANCED mode.
 - Added Windows-spawn multiprocess environment collection with centralized,
   policy-wise batched actor and critic inference.
 - Added bounded frozen-actor caching, profiling, throughput metrics, collector
